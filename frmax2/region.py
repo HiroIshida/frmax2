@@ -1,0 +1,163 @@
+from dataclasses import dataclass
+from functools import cached_property
+from typing import Callable, List, Optional
+
+import numpy as np
+from sklearn.svm import SVC
+
+from frmax2.metric import Metric
+from frmax2.utils import get_co_axes
+
+
+def rescale(pts, b_min, b_max, n):
+    n_points, n_dim = pts.shape
+    width = b_max - b_min
+    b_min_tile = np.tile(b_min, (n_points, 1))
+    width_tile = np.tile(width, (n_points, 1))
+    pts_rescaled = b_min_tile + width_tile * pts / (n - 1)
+    return pts_rescaled
+
+
+def outer_surface_idx(surface_list):
+    def bounding_box_size(surf):
+        b_max = np.max(surf, axis=0)
+        b_min = np.min(surf, axis=0)
+        width = b_max - b_min
+        boxsize = np.prod(width)
+        return boxsize
+
+    # circumscribe outer box
+    sizes = [bounding_box_size(surf) for surf in surface_list]
+    idx = np.argmax(sizes)
+    return idx
+
+
+@dataclass(frozen=True)
+class Surface:
+    vertices: np.ndarray
+    edges: np.ndarray
+
+    def __post_init__(self):
+        for e in [self.vertices, self.edges]:
+            e.flags.writeable = False
+
+    @cached_property
+    def compute_volume(self):
+        ...
+
+
+@dataclass(frozen=True)
+class SuperlevelSet:
+    b_min: np.ndarray
+    b_max: np.ndarray
+    func: Callable[[np.ndarray], np.ndarray]
+
+    def __post_init__(self):
+        for e in [self.b_min, self.b_max]:
+            e.flags.writeable = False
+
+    @property
+    def dim(self) -> int:
+        return len(self.b_min)
+
+    @classmethod
+    def fit(
+        cls, X: List[np.ndarray], Y: List[bool], metric: Metric, C: float = 1e8, margin: float = 0.5
+    ) -> "SuperlevelSet":
+
+        kernel = metric.gen_aniso_rbf_kernel()
+        svc = SVC(gamma="auto", kernel=kernel, probability=False, C=C)
+
+        # check both positive and negative samples exist
+        X, Y = np.array(X, dtype=float), np.array(Y, dtype=bool)
+        assert np.any(Y) and np.any(~Y)
+        svc.fit(X, Y)
+        b_min_tmp, b_max_tmp = X.min(axis=0), X.max(axis=0)
+        width_tmp = b_max_tmp - b_min_tmp
+        b_min = b_min_tmp - width_tmp * margin
+        b_max = b_max_tmp + width_tmp * margin
+        return cls(b_min, b_max, svc.decision_function)
+
+    def create_grid_points(
+        self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
+    ) -> np.ndarray:
+
+        if point_slice is None:
+            assert len(axes_slice) == 0
+        else:
+            assert len(point_slice) == len(axes_slice)
+
+        # NOTE: co indicates a value is about complement axes
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+        linspace_comp_list = [
+            np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
+        ]
+        meshgrid_comp_list = np.meshgrid(*linspace_comp_list)
+        meshgrid_comp_flatten_list = [m.flatten() for m in meshgrid_comp_list]
+        grid_points_comp = np.array(list(zip(*meshgrid_comp_flatten_list)))
+
+        grid_points = np.zeros((len(grid_points_comp), self.dim))
+        grid_points[:, axes_co] = grid_points_comp
+        if point_slice is not None:
+            grid_points[:, axes_slice] = point_slice
+        return grid_points
+
+    def is_inside(self, x: np.ndarray) -> bool:
+        bools = self.func(np.expand_dims(x, axis=0)) > 0
+        return bool(bools[0])
+
+    def get_surface_by_slicing(
+        self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int
+    ) -> Optional[Surface]:
+        grid_points = self.create_grid_points(point_slice, axes_slice, n_grid)
+        values = self.func(grid_points)
+
+        dim_co = self.dim - len(axes_slice)
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+
+        if dim_co == 1:
+            return self._get_surface_by_slicing_1d(values, b_min_co, b_max_co, n_grid)
+        elif dim_co == 2:
+            assert False
+            # return self._get_surface_by_slicing_2d(point_slice, axes_slice, n_grid)
+        else:
+            assert False
+
+    @staticmethod
+    def _get_surface_by_slicing_1d(
+        values: np.ndarray, b_min: np.ndarray, b_max: np.ndarray, n_grid: int
+    ) -> Optional[Surface]:
+
+        if 0 in values:
+            raise ValueError("we assume values don't have 0 inside")
+        values_left = values[0:-1]
+        values_right = values[1:]
+        mul = values_left * values_right
+        idxes_surface = np.where((mul < 0))[0]
+
+        b_min_ = b_min.item()
+        b_max.item()
+        points = np.linspace(b_min_, b_max, n_grid)
+
+        simplexes = []
+        for idx in idxes_surface:
+            value_left = abs(values[idx])
+            value_right = abs(values[idx + 1])
+            point = (value_right * points[idx] + value_left * points[idx + 1]) / (
+                value_left + value_right
+            )
+            simplexes.append(point)
+
+        if len(simplexes) == 0:
+            return None
+
+        if len(simplexes) > 2:
+            print("outer!")
+            points = np.vstack([simplexes[0], simplexes[-1]])
+        else:
+            points = np.vstack(simplexes)
+        return Surface(points, np.array([0, 1], dtype=int))
