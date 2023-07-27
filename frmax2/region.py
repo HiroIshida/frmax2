@@ -1,8 +1,9 @@
 from dataclasses import dataclass
-from functools import cached_property
+from math import factorial
 from typing import Callable, List, Optional
 
 import numpy as np
+from skimage import measure
 from sklearn.svm import SVC
 
 from frmax2.metric import Metric
@@ -41,9 +42,20 @@ class Surface:
         for e in [self.vertices, self.edges]:
             e.flags.writeable = False
 
-    @cached_property
-    def compute_volume(self):
-        ...
+    @property
+    def ambient_dim(self) -> int:
+        return len(self.vertices[0])
+
+    def volume(self) -> float:
+        if self.ambient_dim == 1:
+            return abs(self.vertices[1] - self.vertices[0])
+
+        # use Stokes's theorem
+        vol = 0.0
+        for e in self.edges:
+            facet_matrix = self.vertices[e, :]
+            vol += np.linalg.det(facet_matrix)
+        return abs(vol) / factorial(self.ambient_dim)
 
 
 @dataclass(frozen=True)
@@ -109,7 +121,7 @@ class SuperlevelSet:
         return bool(bools[0])
 
     def get_surface_by_slicing(
-        self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int
+        self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
     ) -> Optional[Surface]:
         grid_points = self.create_grid_points(point_slice, axes_slice, n_grid)
         values = self.func(grid_points)
@@ -122,10 +134,9 @@ class SuperlevelSet:
         if dim_co == 1:
             return self._get_surface_by_slicing_1d(values, b_min_co, b_max_co, n_grid)
         elif dim_co == 2:
-            assert False
-            # return self._get_surface_by_slicing_2d(point_slice, axes_slice, n_grid)
+            return self._get_surface_by_slicing_2d(values, b_min_co, b_max_co, n_grid)
         else:
-            assert False
+            assert False, "under constrction"
 
     @staticmethod
     def _get_surface_by_slicing_1d(
@@ -156,8 +167,29 @@ class SuperlevelSet:
             return None
 
         if len(simplexes) > 2:
-            print("outer!")
             points = np.vstack([simplexes[0], simplexes[-1]])
         else:
             points = np.vstack(simplexes)
         return Surface(points, np.array([0, 1], dtype=int))
+
+    @staticmethod
+    def _get_surface_by_slicing_2d(
+        values: np.ndarray, b_min: np.ndarray, b_max: np.ndarray, n_grid: int
+    ) -> Optional[Surface]:
+
+        data = values.reshape(n_grid, n_grid).T
+        contours_ = measure.find_contours(data, 0.0)
+
+        contours = [rescale(pts, b_min, b_max, n_grid) for pts in contours_]
+        contours_closed = list(filter(lambda cn: np.all(cn[0, :] == cn[-1, :]), contours))
+
+        if len(contours_closed) == 1:
+            vertices = contours_closed[0]
+        elif len(contours_closed) > 1:
+            idx_outer = outer_surface_idx(contours_closed)
+            vertices = contours_closed[idx_outer]
+        else:
+            return None
+        n_vert = len(vertices)
+        edges = np.column_stack((np.arange(n_vert), np.arange(1, n_vert + 1) % n_vert))
+        return Surface(vertices, edges)

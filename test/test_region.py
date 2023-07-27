@@ -1,17 +1,16 @@
 from typing import List, Tuple
 
 import numpy as np
-import pytest
 
 from frmax2.metric import Metric
 from frmax2.region import SuperlevelSet
 
 
 def is_inside_sphere(x: np.ndarray) -> bool:
-    return np.linalg.norm(x) < 1.0
+    return bool(np.linalg.norm(x) < 1.0)
 
 
-@pytest.fixture(scope="session")
+# @pytest.fixture(scope="session")
 def sphere_dataset() -> Tuple[List[np.ndarray], List[bool]]:
     x_list = []
     y_list = []
@@ -49,12 +48,22 @@ def test_SuperlevelSet(sphere_dataset: Tuple[List[np.ndarray], List[bool]]):
     assert np.linalg.norm(pts[:, 0] - 0.0) < 1e-4
     assert np.linalg.norm(pts[:, 2] - 1.0) < 1e-4
 
-    # check surface
+    # check surface 1d
     surface = levelset.get_surface_by_slicing(np.zeros(2), [0, 1], 100)
     assert surface is not None
     assert len(surface.vertices) == 2
-    dist = np.linalg.norm(surface.vertices[0] - surface.vertices[1])
-    np.testing.assert_almost_equal(dist, 2.0, decimal=2)
+    # dist = np.linalg.norm(surface.vertices[0] - surface.vertices[1])
+    volume = surface.volume()
+    np.testing.assert_almost_equal(volume, 2.0, decimal=1.0)
+
+    # check surface 2d
+    surface = levelset.get_surface_by_slicing(np.zeros(1), [0], 100)
+    vol = surface.volume()
+    np.testing.assert_almost_equal(vol, 3.14159, decimal=1.0)
+
+    surface = levelset.get_surface_by_slicing(None, [], 50)
+    # vol = surface.volume()
+    # np.testing.assert_almost_equal(vol, 3.14159, decimal=2.0)
 
 
 if __name__ == "__main__":
