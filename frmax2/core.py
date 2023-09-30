@@ -90,14 +90,13 @@ class ActiveSampler:
         x_best = None
         uncertainty_max = -np.inf
         for param in param_cands:
-            region = self.fslset.slice(param)
-            if region is not None:
-                for co_point in region.points:
-                    x = np.hstack([param, co_point])
-                    uncertainty = np.min(self.metric(x, self.fslset.X))
-                    if uncertainty > uncertainty_max:
-                        uncertainty_max = uncertainty
-                        x_best = x
+            co_points = self.fslset.sample_points_sliced(param)
+            for co_point in co_points:
+                x = np.hstack([param, co_point])
+                uncertainty = np.min(self.metric(x, self.fslset.X))
+                if uncertainty > uncertainty_max:
+                    uncertainty_max = uncertainty
+                    x_best = x
         assert x_best is not None
         return x_best
 

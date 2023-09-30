@@ -79,8 +79,8 @@ class SuperlevelSet:
     @classmethod
     def fit(
         cls,
-        X: List[np.ndarray],
-        Y: List[bool],
+        X: np.ndarray,  # float
+        Y: np.ndarray,  # bool
         metric: MetricBase,
         C: float = 1e8,
         margin: float = 0.5,
@@ -224,8 +224,8 @@ class FactorizableSuperLevelSet:
     @classmethod
     def fit(
         cls,
-        X: List[np.ndarray],
-        Y: List[np.ndarray],  # +1 for positive, -1 for negative
+        X: np.ndarray,  # float
+        Y: np.ndarray,  # bool
         metric: CompositeMetric,
         n_grid: int,
         C: float = 1e8,
@@ -247,20 +247,26 @@ class FactorizableSuperLevelSet:
     def axes_slice(self) -> List[int]:
         return list(range(self.metric.metirics[0].dim))
 
-    def slice(self, point: np.ndarray) -> Optional[Surface]:
-        return self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
+    def sample_points_sliced(self, point: np.ndarray) -> np.ndarray:
+        surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
+        if surface is None:
+            return np.zeros((0, self.dim))
+        else:
+            return surface.points
 
     def volume_sliced(self, point: np.ndarray) -> float:
-        surface = self.slice(point)
+        surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
         if surface is None:
             return 0.0
         else:
             return surface.volume()
 
     def region_widths(self, point: np.ndarray) -> np.ndarray:
-        region = self.slice(point)
+        surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
+        if surface is None:
+            return np.zeros(self.dim)
         get_co_axes(self.dim, self.axes_slice)
-        co_points = region.points
+        co_points = surface.points
         b_min = np.min(co_points, axis=0)
         b_max = np.max(co_points, axis=0)
         return b_max - b_min
