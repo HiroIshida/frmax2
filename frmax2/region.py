@@ -180,6 +180,10 @@ class SuperlevelSet:
             points = np.vstack([simplexes[0], simplexes[-1]])
         else:
             points = np.vstack(simplexes)
+        if len(points) != 2:
+            # I don't know why this happens...
+            # at least in the original implementation, this never happens
+            return None
         return Surface(points, np.array([0, 1], dtype=int))
 
     @staticmethod
@@ -213,6 +217,7 @@ class FactorizableSuperLevelSet:
     b_max: np.ndarray
     n_grid: int
     margin: float
+    C: float
     X: np.ndarray
     Y: np.ndarray
 
@@ -223,15 +228,16 @@ class FactorizableSuperLevelSet:
         Y: List[np.ndarray],  # +1 for positive, -1 for negative
         metric: CompositeMetric,
         n_grid: int,
+        C: float = 1e8,
         margin: float = 0.5,
     ) -> "FactorizableSuperLevelSet":
-        slset = SuperlevelSet.fit(X, Y, metric)
+        slset = SuperlevelSet.fit(X, Y, metric, C, margin)
         b_min = np.min(X, axis=0)
         b_max = np.max(X, axis=0)
         w = b_max - b_min
         b_min -= w * margin
         b_max += w * margin
-        return cls(slset, metric, b_min, b_max, n_grid, margin, X, Y)
+        return cls(slset, metric, b_min, b_max, n_grid, margin, C, X, Y)
 
     @property
     def dim(self) -> int:

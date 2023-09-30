@@ -122,5 +122,5 @@ class ActiveSampler:
         else:
             new_metric = self.metric
         self.fslset = FactorizableSuperLevelSet.fit(
-            X, Y, new_metric, n_grid=self.fslset.n_grid, margin=self.fslset.margin
+            X, Y, new_metric, n_grid=self.fslset.n_grid, margin=self.fslset.margin, C=self.fslset.C
         )
