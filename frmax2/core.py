@@ -102,10 +102,8 @@ class ActiveSampler:
         return x_best
 
     def tell(self, x: np.ndarray, y: bool, update_clf: bool = True) -> None:
-        y_float = 1.0 if y else -1.0
-
         X = np.vstack([self.X, x])
-        Y = np.hstack([self.Y, y_float])
+        Y = np.hstack([self.Y, y])
 
         # update classifier
         if update_clf:
