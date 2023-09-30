@@ -39,5 +39,12 @@ class GaussianEnvironment(ABC):
 
     def default_lengthscales(self) -> Tuple[np.ndarray, np.ndarray]:
         ls_fr = np.array([1.0] * self.m_dim)
-        ls_param = np.array([0.5] * self.n_dim)
+        ls_param = np.array([0.5] * self.n_dim) * 0.5
         return ls_param, ls_fr
+
+    def visualize_region(self, param_min, param_max, fax) -> None:
+        param_lin = np.linspace(param_min, param_max, 200)
+        upper = np.exp(-0.5 * param_lin**2)
+        lower = -upper
+        fig, ax = fax
+        ax.fill_between(param_lin, lower, upper, color="black", alpha=0.15, edgecolor="white")
