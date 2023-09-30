@@ -212,13 +212,15 @@ class FactorizableSuperLevelSet:
     b_min: np.ndarray
     b_max: np.ndarray
     n_grid: int
+    margin: float
     X: np.ndarray
+    Y: np.ndarray
 
     @classmethod
     def fit(
         cls,
         X: List[np.ndarray],
-        Y: List[bool],
+        Y: List[np.ndarray],  # +1 for positive, -1 for negative
         metric: CompositeMetric,
         n_grid: int,
         margin: float = 0.5,
@@ -229,7 +231,11 @@ class FactorizableSuperLevelSet:
         w = b_max - b_min
         b_min -= w * margin
         b_max += w * margin
-        return cls(slset, metric, b_min, b_max, n_grid, X)
+        return cls(slset, metric, b_min, b_max, n_grid, margin, X, Y)
+
+    @property
+    def dim(self) -> int:
+        return self.metric.metirics[0].dim
 
     @property
     def axes_slice(self) -> List[int]:
@@ -244,3 +250,11 @@ class FactorizableSuperLevelSet:
             return 0.0
         else:
             return surface.volume()
+
+    def region_widths(self, point: np.ndarray) -> np.ndarray:
+        region = self.slice(point)
+        get_co_axes(self.dim, self.axes_slice)
+        co_points = region.points
+        b_min = np.min(co_points, axis=0)
+        b_max = np.max(co_points, axis=0)
+        return b_max - b_min

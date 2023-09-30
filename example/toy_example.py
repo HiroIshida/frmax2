@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 from environment import GaussianEnvironment
 from frmax.initialize import initialize
@@ -16,5 +17,11 @@ metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 fslset = FactorizableSuperLevelSet.fit(X, Y, metric, 50)
 
 sampler = ActiveSampler(fslset, param_init)
-x = sampler.ask()
-print(x)
+for i in range(50):
+    print(i)
+    x = sampler.ask()
+    sampler.tell(x, env.isInside(x), False)
+
+fig, ax = plt.subplots()
+ax.scatter(sampler.X[:, 0], sampler.X[:, 1])
+plt.show()

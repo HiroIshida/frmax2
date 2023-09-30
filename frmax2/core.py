@@ -3,7 +3,7 @@ from typing import Callable, Optional, Tuple
 
 import numpy as np
 
-from frmax2.metric import CompositeMetric
+from frmax2.metric import CompositeMetric, Metric
 from frmax2.region import FactorizableSuperLevelSet
 
 
@@ -31,6 +31,18 @@ class ActiveSampler:
         self.best_param_so_far = param_init
         if is_valid_param is None:
             self.is_valid_param = lambda x: True
+
+    @property
+    def X(self) -> np.ndarray:
+        return self.fslset.X
+
+    @property
+    def Y(self) -> np.ndarray:
+        return self.fslset.Y
+
+    @property
+    def axes_param(self) -> np.ndarray:
+        return self.fslset.axes_slice
 
     @property
     def metric(self) -> CompositeMetric:
@@ -89,5 +101,28 @@ class ActiveSampler:
         assert x_best is not None
         return x_best
 
-    def tell(self, x: np.ndarray, y: bool) -> None:
-        pass
+    def tell(self, x: np.ndarray, y: bool, update_clf: bool = True) -> None:
+        y_float = 1.0 if y else -1.0
+
+        X = np.vstack([self.X, x])
+        Y = np.hstack([self.Y, y_float])
+
+        # update classifier
+        if update_clf:
+            ls_co = np.sqrt(np.diag(self.metric.metirics[1].cmat))
+            param_pre = X[-1][self.axes_param]
+            width = self.fslset.region_widths(param_pre)
+            ls_co_cand = width * 0.25
+
+            r = 1.5
+            ls_co_min = ls_co * (1 / r)
+            ls_co_max = ls_co * r
+            ls_co = np.max(np.vstack((ls_co_cand, ls_co_min)), axis=0)
+            ls_co = np.min(np.vstack((ls_co, ls_co_max)), axis=0)
+            metric_co = Metric.from_ls(ls_co)
+            new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
+        else:
+            new_metric = self.metric
+        self.fslset = FactorizableSuperLevelSet.fit(
+            X, Y, new_metric, n_grid=self.fslset.n_grid, margin=self.fslset.margin
+        )
