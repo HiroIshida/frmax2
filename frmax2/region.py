@@ -6,7 +6,7 @@ import numpy as np
 from skimage import measure
 from sklearn.svm import SVC
 
-from frmax2.metric import Metric
+from frmax2.metric import CompositeMetric, MetricBase
 from frmax2.utils import get_co_axes
 
 
@@ -57,6 +57,10 @@ class Surface:
             vol += np.linalg.det(facet_matrix)
         return abs(vol) / factorial(self.ambient_dim)
 
+    @property
+    def points(self) -> np.ndarray:
+        return self.vertices
+
 
 @dataclass(frozen=True)
 class SuperlevelSet:
@@ -74,17 +78,23 @@ class SuperlevelSet:
 
     @classmethod
     def fit(
-        cls, X: List[np.ndarray], Y: List[bool], metric: Metric, C: float = 1e8, margin: float = 0.5
+        cls,
+        X: List[np.ndarray],
+        Y: List[bool],
+        metric: MetricBase,
+        C: float = 1e8,
+        margin: float = 0.5,
     ) -> "SuperlevelSet":
 
         kernel = metric.gen_aniso_rbf_kernel()
         svc = SVC(gamma="auto", kernel=kernel, probability=False, C=C)
 
         # check both positive and negative samples exist
-        X, Y = np.array(X, dtype=float), np.array(Y, dtype=bool)
-        assert np.any(Y) and np.any(~Y)
-        svc.fit(X, Y)
-        b_min_tmp, b_max_tmp = X.min(axis=0), X.max(axis=0)
+        X_: np.ndarray = np.array(X, dtype=float)
+        Y_: np.ndarray = np.array(Y, dtype=bool)
+        assert np.any(Y_) and np.any(~Y_)
+        svc.fit(X_, Y_)
+        b_min_tmp, b_max_tmp = X_.min(axis=0), X_.max(axis=0)
         width_tmp = b_max_tmp - b_min_tmp
         b_min = b_min_tmp - width_tmp * margin
         b_max = b_max_tmp + width_tmp * margin
@@ -193,3 +203,44 @@ class SuperlevelSet:
         n_vert = len(vertices)
         edges = np.column_stack((np.arange(n_vert), np.arange(1, n_vert + 1) % n_vert))
         return Surface(vertices, edges)
+
+
+@dataclass(frozen=True)
+class FactorizableSuperLevelSet:
+    slset: SuperlevelSet
+    metric: CompositeMetric
+    b_min: np.ndarray
+    b_max: np.ndarray
+    n_grid: int
+    X: np.ndarray
+
+    @classmethod
+    def fit(
+        cls,
+        X: List[np.ndarray],
+        Y: List[bool],
+        metric: CompositeMetric,
+        n_grid: int,
+        margin: float = 0.5,
+    ) -> "FactorizableSuperLevelSet":
+        slset = SuperlevelSet.fit(X, Y, metric)
+        b_min = np.min(X, axis=0)
+        b_max = np.max(X, axis=0)
+        w = b_max - b_min
+        b_min -= w * margin
+        b_max += w * margin
+        return cls(slset, metric, b_min, b_max, n_grid, X)
+
+    @property
+    def axes_slice(self) -> List[int]:
+        return list(range(self.metric.metirics[0].dim))
+
+    def slice(self, point: np.ndarray) -> Optional[Surface]:
+        return self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
+
+    def volume_sliced(self, point: np.ndarray) -> float:
+        surface = self.slice(point)
+        if surface is None:
+            return 0.0
+        else:
+            return surface.volume()

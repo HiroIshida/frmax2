@@ -76,13 +76,21 @@ class Metric(MetricBase):
         return self._cmat
 
     @classmethod
-    def from_ls(cls, ls):
+    def from_ls(cls, ls: np.ndarray):
         return cls(np.diag(ls**2))
+
+    @property
+    def dim(self) -> int:
+        return self.cmat.shape[0]
 
 
 @dataclass
 class CompositeMetric(MetricBase):
     metirics: List[Metric]
+
+    @classmethod
+    def from_ls_list(cls, ls_list: List[np.ndarray]):
+        return cls([Metric.from_ls(ls) for ls in ls_list])
 
     @property
     def cmat(self) -> np.ndarray:
