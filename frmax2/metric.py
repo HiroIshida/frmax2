@@ -95,3 +95,7 @@ class CompositeMetric(MetricBase):
     @property
     def cmat(self) -> np.ndarray:
         return block_diag(*[m.cmat for m in self.metirics])
+
+    @property
+    def dim(self) -> int:
+        return sum([m.dim for m in self.metirics])

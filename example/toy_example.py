@@ -5,9 +5,8 @@ import numpy as np
 from environment import GaussianEnvironment
 from frmax.initialize import initialize
 
-from frmax2.core import ActiveSampler
+from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
 from frmax2.metric import CompositeMetric
-from frmax2.region import FactorizableSuperLevelSet
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type=int, default=0)
@@ -23,15 +22,17 @@ param_init = env.default_init_param()
 e_length = np.array([8.0])
 
 X, Y, ls_co = initialize(lambda x: +1 if env.isInside(x) else -1, param_init, e_length, eps=0.2)
+ls_co = np.array([0.3])
 metric = CompositeMetric.from_ls_list([ls_param, ls_co])
-fslset = FactorizableSuperLevelSet.fit(X, Y, metric, 50, C=1e4)
 
 # run
-sampler = ActiveSampler(fslset, param_init)
+config = ActiveSamplerConfig()
+sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
+# sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
 for i in range(args.n):
     print(i)
     x = sampler.ask()
-    sampler.tell(x, env.isInside(x))
+    sampler.tell(x, env.isInside(x), update_clf=False)
 
 # plot
 fig, ax = plt.subplots()
@@ -46,8 +47,12 @@ xlin = np.linspace(-2.5, 1.5, 100)
 ylin = np.linspace(-1.5, 1.5, 100)
 Xgrid, Ygrid = np.meshgrid(xlin, ylin)
 pts = np.vstack([Xgrid.ravel(), Ygrid.ravel()]).T
-values = sampler.fslset.slset.func(pts)
+values = sampler.fslset.func(pts)
 Z = values.reshape(Xgrid.shape)
 ax.contour(Xgrid, Ygrid, Z, levels=[0], cmpa="jet", zorder=1)
 ax.set_aspect("equal")
+
+# min max ax
+ax.set_xlim(-2.5, 1.5)
+ax.set_ylim(-1.5, 1.5)
 plt.show()

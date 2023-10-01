@@ -6,7 +6,7 @@ import numpy as np
 from skimage import measure
 from sklearn.svm import SVC
 
-from frmax2.metric import CompositeMetric, MetricBase
+from frmax2.metric import MetricBase
 from frmax2.utils import get_co_axes
 
 
@@ -262,55 +262,3 @@ class SuperlevelSet:
         n_vert = len(vertices)
         edges = np.column_stack((np.arange(n_vert), np.arange(1, n_vert + 1) % n_vert))
         return Surface(vertices, edges)
-
-
-@dataclass(frozen=True)
-class FactorizableSuperLevelSet:
-    slset: SuperlevelSet
-    metric: CompositeMetric
-    b_min: np.ndarray
-    b_max: np.ndarray
-    n_grid: int
-    margin: float
-    C: float
-    X: np.ndarray
-    Y: np.ndarray
-
-    @classmethod
-    def fit(
-        cls,
-        X: np.ndarray,  # float
-        Y: np.ndarray,  # bool
-        metric: CompositeMetric,
-        n_grid: int,
-        C: float = 1e8,
-        margin: float = 0.5,
-    ) -> "FactorizableSuperLevelSet":
-        slset = SuperlevelSet.fit(X, Y, metric, C, margin)
-        b_min = np.min(X, axis=0)
-        b_max = np.max(X, axis=0)
-        w = b_max - b_min
-        b_min -= w * margin
-        b_max += w * margin
-        return cls(slset, metric, b_min, b_max, n_grid, margin, C, X, Y)
-
-    @property
-    def dim(self) -> int:
-        return self.metric.metirics[0].dim
-
-    @property
-    def axes_slice(self) -> List[int]:
-        return list(range(self.metric.metirics[0].dim))
-
-    def sample_points_sliced(self, point: np.ndarray) -> np.ndarray:
-        surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
-        if surface is None:
-            return np.zeros((0, self.dim))
-        else:
-            return surface.points
-
-    def volume_sliced(self, point: np.ndarray) -> float:
-        return self.slset.sliced_volume_grid(point, self.axes_slice, self.n_grid)
-
-    def region_widths(self, point: np.ndarray) -> np.ndarray:
-        return self.slset.measure_region_widths_grid(point, self.axes_slice, self.n_grid)

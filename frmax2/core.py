@@ -1,52 +1,68 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
 from frmax2.metric import CompositeMetric, Metric
-from frmax2.region import FactorizableSuperLevelSet
+from frmax2.region import SuperlevelSet, get_co_axes
 
 
 @dataclass
 class ActiveSamplerConfig:
     n_mc_param_search: int = 20
     r_exploration: float = 0.5
+    n_grid: int = 10
+    aabb_margin: float = 0.5
+    n_mc_integral: int = 100
+    c_svm: float = 1e4
 
 
-class ActiveSampler:
-    fslset: FactorizableSuperLevelSet
+class ActiveSamplerBase(ABC):
+    fslset: SuperlevelSet
+    metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
     config: ActiveSamplerConfig
     best_param_so_far: np.ndarray
+    X: np.ndarray
+    Y: np.ndarray
+    axes_param: List[int]
 
     def __init__(
         self,
-        fslset: FactorizableSuperLevelSet,
+        X: np.ndarray,  # float
+        Y: np.ndarray,  # bool
+        metric: CompositeMetric,
         param_init: np.ndarray,
         config: ActiveSamplerConfig = ActiveSamplerConfig(),
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
     ):
-        self.fslset = fslset
+        slset = SuperlevelSet.fit(X, Y, metric, C=config.c_svm)
+        self.fslset = slset
+        self.metric = metric
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
             self.is_valid_param = lambda x: True
+        self.X = X
+        self.Y = Y
+        self.axes_param = list(range(len(param_init)))
+
+    @abstractmethod
+    def compute_sliced_volume(self, param: np.ndarray) -> float:
+        ...
+
+    @abstractmethod
+    def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
+        ...
 
     @property
-    def X(self) -> np.ndarray:
-        return self.fslset.X
-
-    @property
-    def Y(self) -> np.ndarray:
-        return self.fslset.Y
-
-    @property
-    def axes_param(self) -> np.ndarray:
-        return self.fslset.axes_slice
-
-    @property
-    def metric(self) -> CompositeMetric:
-        return self.fslset.metric
+    def dim(self) -> int:
+        return self.metric.dim
 
     def _determine_param_candidates(self) -> Tuple[np.ndarray, np.ndarray]:
         """Returns (param_candidates, volumes)"""
@@ -68,7 +84,7 @@ class ActiveSampler:
         r = self.config.r_exploration
         while True:
             param_sampled = sample_until_valid(r)
-            volumes = np.array([self.fslset.volume_sliced(p) for p in param_sampled])
+            volumes = np.array([self.compute_sliced_volume(p) for p in param_sampled])
             mean = np.mean(volumes)
             indices_better = np.where(volumes >= mean)[0]
             is_all_equal = len(indices_better) == self.config.n_mc_param_search
@@ -83,17 +99,17 @@ class ActiveSampler:
         param_cands, volumes = self._determine_param_candidates()
         # update param_best_so_far
         idx_max_volume = np.argmax(volumes)
-        if self.fslset.volume_sliced(self.best_param_so_far) < volumes[idx_max_volume]:
+        if self.compute_sliced_volume(self.best_param_so_far) < volumes[idx_max_volume]:
             self.best_param_so_far = param_cands[idx_max_volume]
 
         # sample points
         x_best = None
         uncertainty_max = -np.inf
         for param in param_cands:
-            co_points = self.fslset.sample_points_sliced(param)
+            co_points = self.sample_sliced_points(param)
             for co_point in co_points:
                 x = np.hstack([param, co_point])
-                uncertainty = np.min(self.metric(x, self.fslset.X))
+                uncertainty = np.min(self.metric(x, self.X))
                 if uncertainty > uncertainty_max:
                     uncertainty_max = uncertainty
                     x_best = x
@@ -108,7 +124,7 @@ class ActiveSampler:
         if update_clf:
             ls_co = np.sqrt(np.diag(self.metric.metirics[1].cmat))
             param_pre = X[-1][self.axes_param]
-            width = self.fslset.region_widths(param_pre)
+            width = self.compute_sliced_widths(param_pre)
             ls_co_cand = width * 0.25
 
             r = 1.5
@@ -120,6 +136,39 @@ class ActiveSampler:
             new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
         else:
             new_metric = self.metric
-        self.fslset = FactorizableSuperLevelSet.fit(
-            X, Y, new_metric, n_grid=self.fslset.n_grid, margin=self.fslset.margin, C=self.fslset.C
+        self.X = X
+        self.Y = Y
+        self.fslset = SuperlevelSet.fit(X, Y, new_metric, C=self.config.c_svm)
+
+
+class HolllessActiveSampler(ActiveSamplerBase):
+    def compute_sliced_volume(self, param: np.ndarray) -> float:
+        return self.fslset.sliced_volume_grid(param, self.axes_param, self.config.n_grid)
+
+    def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
+        surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
+        if surface is None:
+            return np.zeros((0, self.metric.metirics[0].dim))
+        else:
+            return surface.points
+
+    def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
+        return self.fslset.measure_region_widths_grid(param, self.axes_param, self.config.n_grid)
+
+
+class NaiveActiveSampler(ActiveSamplerBase):
+    def compute_sliced_volume(self, param: np.ndarray) -> float:
+        return self.fslset.sliced_volume_mc(param, self.axes_param, self.config.n_mc_integral)
+
+    def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
+        points = self.fslset.sample_mc_points_sliced(
+            param, self.axes_param, self.config.n_mc_integral
+        )
+        points_inside = points[self.fslset.func(points) > -0.0]
+        axes_co = get_co_axes(self.dim, self.axes_param)
+        return points_inside[:, axes_co]
+
+    def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
+        return self.fslset.measure_region_widths_mc(
+            param, self.axes_param, self.config.n_mc_integral
         )
