@@ -100,6 +100,28 @@ class SuperlevelSet:
         b_max = b_max_tmp + width_tmp * margin
         return cls(b_min, b_max, svc.decision_function)
 
+    def sliced_volume_mc(self, point_slice: np.ndarray, axes_slice: List[int], n_mc: int) -> float:
+        """compute volume of the sliced region by Monte Carlo integration"""
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+        points_co = np.random.rand(n_mc, len(axes_co)) * (b_max_co - b_min_co) + b_min_co
+        points = np.zeros((n_mc, self.dim))
+        points[:, axes_co] = points_co
+        points[:, axes_slice] = point_slice
+        count_is_inside = int(np.sum(self.func(points) > -1))
+        return count_is_inside / n_mc * float(np.prod(b_max_co - b_min_co))
+
+    def sliced_volume_stokes(
+        self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int
+    ) -> float:
+        """compute volume of the sliced region by Stokes's theorem"""
+        surface = self.get_surface_by_slicing(point_slice, axes_slice, n_grid)
+        if surface is None:
+            return 0.0
+        else:
+            return surface.volume()
+
     def create_grid_points(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
     ) -> np.ndarray:
@@ -255,11 +277,7 @@ class FactorizableSuperLevelSet:
             return surface.points
 
     def volume_sliced(self, point: np.ndarray) -> float:
-        surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
-        if surface is None:
-            return 0.0
-        else:
-            return surface.volume()
+        return self.slset.sliced_volume_stokes(point, self.axes_slice, self.n_grid)
 
     def region_widths(self, point: np.ndarray) -> np.ndarray:
         surface = self.slset.get_surface_by_slicing(point, self.axes_slice, self.n_grid)
