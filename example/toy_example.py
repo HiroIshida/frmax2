@@ -5,10 +5,11 @@ import numpy as np
 from environment import GaussianEnvironment
 from frmax.initialize import initialize
 
-from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
+from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler, NaiveActiveSampler
 from frmax2.metric import CompositeMetric
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--method", type=str, default="hollless")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("-n", type=int, default=70)
 args = parser.parse_args()
@@ -25,10 +26,13 @@ X, Y, ls_co = initialize(lambda x: +1 if env.isInside(x) else -1, param_init, e_
 ls_co = np.array([0.3])
 metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 
-# run
 config = ActiveSamplerConfig()
-sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
-# sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
+if args.method == "hollless":
+    sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
+else:
+    sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
+
+sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
 for i in range(args.n):
     print(i)
     x = sampler.ask()
