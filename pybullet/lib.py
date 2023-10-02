@@ -4,12 +4,13 @@ from tempfile import TemporaryDirectory
 from typing import List
 
 import numpy as np
+from movement_primitives.dmp import DMP  # 0.5.0
 from skmp.constraint import CollFreeConst, PoseConstraint
 from skmp.robot.pr2 import PR2Config
 from skmp.robot.utils import get_robot_state, set_robot_state
 from skmp.satisfy import satisfy_by_optimization, satisfy_by_optimization_with_budget
 from skrobot.coordinates import Coordinates
-from skrobot.coordinates.math import rpy2quaternion
+from skrobot.coordinates.math import normalize_vector, rpy2quaternion
 from skrobot.interfaces import PybulletRobotInterface
 from skrobot.model.primitives import Box
 from skrobot.models import PR2
@@ -100,6 +101,7 @@ class PR2PybulletRobotInterface(PybulletRobotInterface):
 
         start = time.time()
         while True:
+            time.sleep(0.01)
             pybullet.stepSimulation()
             wait = False
             for idx in self.joint_ids:
@@ -244,24 +246,37 @@ class Environment:
         self.co_grasp = co_grasp
         self.co_grasp_pre = co_grasp_pre
 
-    def default_relative_trajectory(self, n_split=20) -> List[Coordinates]:
+    def default_relative_trajectory(self, n_split=100) -> DMP:
         co_grasp = self.co_handle.copy_worldcoords()
         co_grasp.rotate(0.3, "z")
         co_grasp.translate([0.02, -0.015, 0.0])
-        traj = [co_grasp.copy_worldcoords()]
+        traj_co = [co_grasp.copy_worldcoords().transform(self.co_handle.inverse_transformation())]
         slide_per_dt = 0.08 / n_split
         for _ in range(n_split - 1):
             co_grasp.translate([-slide_per_dt, 0, 0])
             co_grasp_wrt_handle = co_grasp.copy_worldcoords().transform(
                 self.co_handle.inverse_transformation()
             )
-            traj.append(co_grasp_wrt_handle)
-        traj = traj[::-1]
-        return traj
+            traj_co.append(co_grasp_wrt_handle)
+        traj_co = traj_co[::-1]
+        traj_xyzquat = [np.hstack([co.worldpos(), co.quaternion]) for co in traj_co]
+        times = np.linspace(0, 1, n_split)
+        dmp = DMP(7, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+        dmp.imitate(times, np.array(traj_xyzquat))
+        return dmp
 
-    def reproduce_relative_trajectory(self, traj: List[Coordinates]):
-        for co_rarm_wrt_handle in traj:
-            co_rarm = co_rarm_wrt_handle.transform(self.co_handle)
+    def reproduce_relative_trajectory(self, dmp: DMP):
+        dmp.reset()
+        co_rarm = self.pr2.rarm_end_coords.copy_worldcoords()
+        xyzquat = np.hstack([co_rarm.worldpos(), co_rarm.quaternion])
+        dmp.configure(xyzquat)
+        T, xyzquat_list = dmp.open_loop()
+
+        for xyzquat in xyzquat_list:
+            print(xyzquat[:3])
+            q = normalize_vector(xyzquat[3:])
+            co_rarm = Coordinates(xyzquat[:3], q)
+            co_rarm = co_rarm.transform(self.co_handle)
             self.solve_ik(co_rarm, simulate=True)
 
     def solve_ik(self, co: Coordinates, simulate: bool = False, random_sampling: bool = False):
