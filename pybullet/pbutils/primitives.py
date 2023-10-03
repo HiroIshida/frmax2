@@ -3,11 +3,12 @@ from tempfile import TemporaryDirectory
 from typing import Callable, Optional
 
 import numpy as np
-import pybullet
 import trimesh
 from skrobot.coordinates import Coordinates
 from skrobot.model.link import Link
 from skrobot.model.primitives import Box, MeshLink
+
+import pybullet
 
 
 class PybulletPrimitiveMixIn:

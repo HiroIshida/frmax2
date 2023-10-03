@@ -1,19 +1,44 @@
 import argparse
+import os
+import sys
 import time
-from pathlib import Path
+from contextlib import contextmanager
 from functools import cached_property
+from pathlib import Path
 
-from movement_primitives.dmp import DMP  # 0.5.0
 import numpy as np
-import pybullet
 import pybullet_data
-from skrobot.coordinates.math import normalize_vector, rpy2quaternion
-from skrobot.models.pr2 import PR2
-
+from movement_primitives.dmp import DMP  # 0.5.0
 from pbutils.primitives import PybulletBox, PybulletMesh
 from pbutils.robot_interface import PybulletPR2
 from pbutils.utils import solve_ik
 from skrobot.coordinates import Coordinates
+from skrobot.coordinates.math import normalize_vector
+from skrobot.models.pr2 import PR2
+
+import pybullet
+
+
+# copied from: https://github.com/bulletphysics/bullet3/issues/2170
+@contextmanager
+def suppress_stdout():
+
+    fd = sys.stdout.fileno()
+
+    def _redirect_stdout(to):
+        sys.stdout.close()  # + implicit flush()
+        os.dup2(to.fileno(), fd)  # fd writes to 'to' file
+        sys.stdout = os.fdopen(fd, "w")  # Python writes to fd
+
+    with os.fdopen(os.dup(fd), "w") as old_stdout:
+        with open(os.devnull, "w") as file:
+            _redirect_stdout(to=file)
+        try:
+            yield  # allow code to be run with the redirected stdout
+        finally:
+            _redirect_stdout(to=old_stdout)  # restore stdout.
+            # buffering and flags such as
+            # CLOEXEC may be different
 
 
 class World:
@@ -31,21 +56,23 @@ class World:
             pybullet.connect(pybullet.DIRECT)
         pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
         pybullet.setGravity(0.0, 0.0, -9.8)
-
-        pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())  # used by loadURDF
-        pybullet.loadURDF("plane.urdf")
         pybullet.setTimeStep(0.001)
+        pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())  # used by loadURDF
 
-        box = PybulletBox(np.array([0.6, 0.8, 0.8]), np.array([0.8, 0.0, 0.4]))
-        cup = PybulletMesh(
-            Path("./cup_reduce.obj"),
-            scale=0.03,
-            pos=np.array([0.6, 0.0, 0.8]),
-            rot=np.array([np.pi / 2, 0, 0]),
-        )
+        with suppress_stdout():
+            # loading urdf often prints out annoying warnings
+            pybullet.loadURDF("plane.urdf")
+            box = PybulletBox(np.array([0.6, 0.8, 0.8]), np.array([0.8, 0.0, 0.4]))
+            cup = PybulletMesh(
+                Path("./cup_reduce.obj"),
+                scale=0.03,
+                pos=np.array([0.6, 0.0, 0.8]),
+                rot=np.array([np.pi / 2, 0, 0]),
+            )
 
-        pr2 = PR2()
-        ri = PybulletPR2(pr2)
+            pr2 = PR2()
+            ri = PybulletPR2(pr2)
+
         pr2.reset_manip_pose()
         pr2.gripper_distance(0.05)
         ri.set_q(pr2.angle_vector(), t_sleep=0.01, simulate=False)
@@ -84,6 +111,12 @@ class World:
         co_grasp_pre.translate([-0.1, -0.0, 0.0])
         return co_grasp_pre
 
+    def set_cup_position_offset(self, offset: np.ndarray, angle: float = 0.0) -> None:
+        co = self.mesh_pose_init.copy_worldcoords()
+        co.translate(offset, wrt="world")
+        co.rotate(angle, "x")
+        self.cup.set_coords(co)
+
     def reset(self) -> None:
         self.pr2.angle_vector(self.av_init)
         self.ri.set_q(self.av_init, t_sleep=0.0, simulate=False)
@@ -106,7 +139,6 @@ class World:
         traj_co = traj_co[::-1]
         traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
 
-
         times = np.linspace(0, 1, n_split)
         dmp = DMP(7, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
         dmp.imitate(times, np.array(traj_xyzquat))
@@ -115,10 +147,11 @@ class World:
     def reproduce_grasping_trajectory(self, dmp: DMP) -> None:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
         co_rarm_wrt_handle = co_rarm_wrt_world.copy_worldcoords().transform(
-            self.co_handle.inverse_transformation())
-        xyzquat = np.hstack([co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion])
+            self.co_handle.inverse_transformation()
+        )
+        xyzquat_start = np.hstack([co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion])
         dmp.reset()
-        dmp.configure(start_y = xyzquat)
+        dmp.configure(start_y=xyzquat_start)
         T, xyzquat_list = dmp.open_loop()
 
         for xyzquat in xyzquat_list:
@@ -135,5 +168,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     world = World(gui=args.gui)
     world.reset()
+    print(world.co_handle)
+    world.set_cup_position_offset(np.array([+0.12, -0.0, 0.0]), -0.0)
+    print(world.co_handle)
     world.reproduce_grasping_trajectory(world.relative_grasping_trajectory)
-    import time; time.sleep(1000)
+    time.sleep(1.0)
+    # world.reset()
+    import time
+
+    time.sleep(1000)

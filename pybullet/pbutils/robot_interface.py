@@ -3,8 +3,9 @@ from functools import cached_property
 from typing import Dict, List
 
 import numpy as np
-import pybullet
 from skrobot.models.pr2 import PR2
+
+import pybullet
 
 
 class PybulletPR2:
