@@ -71,6 +71,7 @@ class World:
         pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())  # used by loadURDF
 
         with suppress_stdout():
+            # if True:
             # loading urdf often prints out annoying warnings
             pybullet.loadURDF("plane.urdf")
             box = PybulletBox(np.array([0.6, 0.8, 0.8]), np.array([0.8, 0.0, 0.4]))
@@ -79,7 +80,6 @@ class World:
                 scale=0.03,
                 pos=np.array([0.6, 0.0, 0.8]),
             )
-
             pr2 = PR2()
             ri = PybulletPR2(pr2)
 

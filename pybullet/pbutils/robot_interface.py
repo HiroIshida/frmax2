@@ -3,6 +3,7 @@ from functools import cached_property
 from typing import Dict, List
 
 import numpy as np
+from skrobot.model.link import Link
 from skrobot.models.pr2 import PR2
 
 import pybullet
@@ -15,9 +16,9 @@ class PybulletPR2:
     joint_id_to_name_table: Dict[int, str]
     link_name_to_id_table: Dict[str, int]
     link_id_to_name_table: Dict[int, str]
-    max_angle_diff: float
+    max_angle_diff_list: List[float]  # same order as joint_lst
 
-    def __init__(self, pr2: PR2, max_angle_diff: float = 0.005):
+    def __init__(self, pr2: PR2):
         self.pr2 = pr2
         robot_id = pybullet.loadURDF(pr2.default_urdf_path, useFixedBase=True)
         self.robot_id = robot_id
@@ -40,11 +41,31 @@ class PybulletPR2:
         joint_id_to_name_table = {v: k for k, v in joint_name_to_id_table.items()}
         link_id_to_name_table = {v: k for k, v in link_name_to_id_table.items()}
 
+        max_angle_diff_table = {name: 0.005 for name in joint_name_to_id_table.keys()}
+
+        # joint close to end effector should have larger max_angle_diff
+        # first get child joints from r_forarm_link
+        close_joint_names = []
+
+        def recursion(link: Link):
+            clinks = link.child_links
+            if len(clinks) == 0:
+                return
+            for clink in clinks:
+                close_joint_names.append(clink.joint.name)
+                recursion(clink)
+
+        recursion(pr2.r_forearm_link)
+        recursion(pr2.l_forearm_link)
+        for joint_name in close_joint_names:
+            max_angle_diff_table[joint_name] = 0.02
+        max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in pr2.joint_list]
+
         self.joint_name_to_id_table = joint_name_to_id_table
         self.joint_id_to_name_table = joint_id_to_name_table
         self.link_name_to_id_table = link_name_to_id_table
         self.link_id_to_name_table = link_id_to_name_table
-        self.max_angle_diff = max_angle_diff
+        self.max_angle_diff_list = max_angle_diff_list
 
     @cached_property
     def pb_joint_ids(self) -> List[int]:
@@ -73,9 +94,16 @@ class PybulletPR2:
         if simulate:
             q_current = self.get_q()
             diff = q_target - q_current
-            max_diff = np.max(np.abs(diff)).item()
-            phase_per_step = self.max_angle_diff / max_diff
-            phase_list = [phase_per_step * i for i in range(int(max_diff // self.max_angle_diff))]
+
+            largest_index = np.argmax(np.abs(diff) / np.array(self.max_angle_diff_list))
+
+            max_diff = np.abs(diff)[largest_index]
+            max_angle_diff = self.max_angle_diff_list[largest_index]
+            phase_per_step = max_angle_diff / max_diff
+            if phase_per_step > 1.0:
+                phase_list = [0.0]
+            else:
+                phase_list = [phase_per_step * i for i in range(int(max_diff // max_angle_diff))]
             phase_list.append(1.0)
             assert phase_list == sorted(phase_list)
 
