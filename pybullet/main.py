@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pybullet_data
@@ -131,15 +132,36 @@ class World:
         self.ri.set_q(self.av_init, t_sleep=0.0, simulate=False)
         self.cup.set_coords(self.mesh_pose_init)
 
-    def get_wrt_handle(self, co_grasp2world: Coordinates) -> Coordinates:
+    def get_wrt_handle(
+        self, co_grasp2world: Coordinates, recog_error: Optional[np.ndarray] = None
+    ) -> Coordinates:
+        if recog_error is None:
+            recog_error = np.zeros(3)
+
+        co_handle_error = self.co_handle.copy_worldcoords()
+        trans = np.zeros(3)
+        trans[:2] = recog_error[:2]
+        co_handle_error.translate(trans, wrt="world")
+        co_handle_error.rotate(recog_error[2], "z", wrt="local")
+
         tf_g2w = CoordinateTransform.from_skrobot_coords(co_grasp2world, "g", "w")
-        tf_h2w = CoordinateTransform.from_skrobot_coords(self.co_handle, "h", "w")
+        tf_h2w = CoordinateTransform.from_skrobot_coords(co_handle_error, "h", "w")
         tf_g2h = chain_transform(tf_g2w, tf_h2w.inverse())
         return tf_g2h.to_skrobot_coords()
 
-    def get_wrt_world(self, co_gripper2handle: Coordinates) -> Coordinates:
+    def get_wrt_world(
+        self, co_gripper2handle: Coordinates, recog_error: Optional[np.ndarray] = None
+    ) -> Coordinates:
+        if recog_error is None:
+            recog_error = np.zeros(3)
+        co_handle_error = self.co_handle.copy_worldcoords()
+        trans = np.zeros(3)
+        trans[:2] = recog_error[:2]
+        co_handle_error.translate(trans, wrt="world")
+        co_handle_error.rotate(recog_error[2], "z", wrt="local")
+
         tf_g2h = CoordinateTransform.from_skrobot_coords(co_gripper2handle, "g", "h")
-        tf_h2w = CoordinateTransform.from_skrobot_coords(self.co_handle, "h", "w")
+        tf_h2w = CoordinateTransform.from_skrobot_coords(co_handle_error, "h", "w")
         tf_g2w = chain_transform(tf_g2h, tf_h2w)
         return tf_g2w.to_skrobot_coords()
 
@@ -161,9 +183,12 @@ class World:
         dmp.imitate(times, np.array(traj_xyzquat))
         return dmp
 
-    def reproduce_grasping_dmp(self, dmp: DMP) -> None:
+    def reproduce_grasping_dmp(self, dmp: DMP, recog_error: Optional[np.ndarray] = None) -> None:
+        if recog_error is None:
+            recog_error = np.zeros(3)
+
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
-        co_rarm_wrt_handle = self.get_wrt_handle(co_rarm_wrt_world)
+        co_rarm_wrt_handle = self.get_wrt_handle(co_rarm_wrt_world, recog_error)
 
         xyzquat_start = np.hstack([co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion])
         dmp.reset()
@@ -174,7 +199,7 @@ class World:
         for xyzquat in xyzquat_list:
             q = normalize_vector(xyzquat[3:])
             co_rarm2handle = Coordinates(xyzquat[:3], q)
-            co_rarm2world = self.get_wrt_world(co_rarm2handle)
+            co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
             traj.append(co_rarm2world)
 
         for co_rarm2world in traj:
@@ -210,7 +235,7 @@ if __name__ == "__main__":
     world.reset()
     create_debug_axis(world.co_handle)
     world.set_cup_position_offset(np.zeros(3), +0.3)
-    world.reproduce_grasping_dmp(world.relative_grasping_dmp)
+    world.reproduce_grasping_dmp(world.relative_grasping_dmp, np.array([0.0, 0.0, -0.3]))
     assert world.check_grasp_success()
     world.reset()
     time.sleep(1000)
