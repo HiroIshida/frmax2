@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import pybullet_data
@@ -15,6 +16,7 @@ from pbutils.utils import solve_ik
 from skrobot.coordinates import Coordinates
 from skrobot.coordinates.math import normalize_vector
 from skrobot.models.pr2 import PR2
+from utils import CoordinateTransform, chain_transform
 
 import pybullet
 
@@ -39,6 +41,16 @@ def suppress_stdout():
             _redirect_stdout(to=old_stdout)  # restore stdout.
             # buffering and flags such as
             # CLOEXEC may be different
+
+
+def create_debug_axis(coords: Coordinates, length: float = 0.1):
+    start = coords.worldpos()
+    end_x = start + coords.rotate_vector([length, 0, 0])
+    pybullet.addUserDebugLine(start, end_x, [1, 0, 0], 3)
+    end_y = start + coords.rotate_vector([0, length, 0])
+    pybullet.addUserDebugLine(start, end_y, [0, 1, 0], 3)
+    end_z = start + coords.rotate_vector([0, 0, length])
+    pybullet.addUserDebugLine(start, end_z, [0, 0, 1], 3)
 
 
 class World:
@@ -67,7 +79,6 @@ class World:
                 Path("./cup_reduce.obj"),
                 scale=0.03,
                 pos=np.array([0.6, 0.0, 0.8]),
-                rot=np.array([np.pi / 2, 0, 0]),
             )
 
             pr2 = PR2()
@@ -87,15 +98,15 @@ class World:
         solve_ik(pr2, self.co_grasp_pre, sdf=box.sdf)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
-        self.relative_grasping_trajectory  # cached property compute cache now
+        self.relative_grasping_dmp  # cached property compute cache now
+        self.relative_grasping_coords
 
     @property
     def co_handle(self) -> Coordinates:
         co_handle = self.cup.obj.copy_worldcoords()
         co_handle.translate([0, 0, 0.07])
         co_handle.rotate(np.pi * 0.2, "z")
-        co_handle.translate([-0.12, -0.0, 0.0])
-        co_handle.rotate(-np.pi * 0.5, "z")
+        co_handle.translate([0.0, -0.12, 0.0])
         return co_handle
 
     @property
@@ -114,7 +125,7 @@ class World:
     def set_cup_position_offset(self, offset: np.ndarray, angle: float = 0.0) -> None:
         co = self.mesh_pose_init.copy_worldcoords()
         co.translate(offset, wrt="world")
-        co.rotate(angle, "x")
+        co.rotate(angle, "z", wrt="world")
         self.cup.set_coords(co)
 
     def reset(self) -> None:
@@ -122,19 +133,41 @@ class World:
         self.ri.set_q(self.av_init, t_sleep=0.0, simulate=False)
         self.cup.set_coords(self.mesh_pose_init)
 
-    @cached_property
-    def relative_grasping_trajectory(self) -> DMP:
-        co_grasp = self.co_grasp.copy_worldcoords()
-        n_split = 100
+    def get_wrt_handle(self, co_grasp2world: Coordinates) -> Coordinates:
+        tf_g2w = CoordinateTransform.from_skrobot_coords(co_grasp2world, "g", "w")
+        tf_h2w = CoordinateTransform.from_skrobot_coords(self.co_handle, "h", "w")
+        tf_g2h = chain_transform(tf_g2w, tf_h2w.inverse())
+        return tf_g2h.to_skrobot_coords()
 
-        traj_co = [co_grasp.copy_worldcoords().transform(self.co_handle.inverse_transformation())]
+    def get_wrt_world(self, co_gripper2handle: Coordinates) -> Coordinates:
+        tf_g2h = CoordinateTransform.from_skrobot_coords(co_gripper2handle, "g", "h")
+        tf_h2w = CoordinateTransform.from_skrobot_coords(self.co_handle, "h", "w")
+        tf_g2w = chain_transform(tf_g2h, tf_h2w)
+        return tf_g2w.to_skrobot_coords()
+
+    @cached_property
+    def relative_grasping_coords(self) -> List[Coordinates]:
+        co_grasp = self.co_grasp.copy_worldcoords()
+        n_split = 10
+
+        traj_co = [self.get_wrt_handle(co_grasp)]
         slide_per_dt = 0.1 / n_split
         for _ in range(n_split - 1):
             co_grasp.translate([-slide_per_dt, 0, 0])
-            co_grasp_wrt_handle = co_grasp.copy_worldcoords().transform(
-                self.co_handle.inverse_transformation()
-            )
+            co_grasp_wrt_handle = self.get_wrt_handle(co_grasp)
             traj_co.append(co_grasp_wrt_handle)
+        traj_co = traj_co[::-1]
+        return traj_co
+
+    @cached_property
+    def relative_grasping_dmp(self) -> DMP:
+        co_grasp = self.co_grasp.copy_worldcoords()
+        n_split = 100
+        traj_co = [self.get_wrt_handle(co_grasp)]
+        slide_per_dt = 0.1 / n_split
+        for _ in range(n_split - 1):
+            co_grasp.translate([-slide_per_dt, 0, 0])
+            traj_co.append(self.get_wrt_handle(co_grasp))
 
         traj_co = traj_co[::-1]
         traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
@@ -144,36 +177,53 @@ class World:
         dmp.imitate(times, np.array(traj_xyzquat))
         return dmp
 
-    def reproduce_grasping_trajectory(self, dmp: DMP) -> None:
+    def reproduce_grasping_coords(self, traj_co: List[Coordinates]) -> None:
+        traj_co_grasp_wrt_world = [self.get_wrt_world(co) for co in traj_co]
+
+        # visualize
+        for co_grasp in traj_co_grasp_wrt_world:
+            create_debug_axis(co_grasp)
+
+        for co_grasp in traj_co_grasp_wrt_world:
+            solve_ik(self.pr2, co_grasp)
+            self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+
+    def reproduce_grasping_dmp(self, dmp: DMP) -> None:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
-        co_rarm_wrt_handle = co_rarm_wrt_world.copy_worldcoords().transform(
-            self.co_handle.inverse_transformation()
-        )
+        co_rarm_wrt_handle = self.get_wrt_handle(co_rarm_wrt_world)
+
         xyzquat_start = np.hstack([co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion])
         dmp.reset()
         dmp.configure(start_y=xyzquat_start)
         T, xyzquat_list = dmp.open_loop()
 
+        traj = []
         for xyzquat in xyzquat_list:
             q = normalize_vector(xyzquat[3:])
-            co_rarm = Coordinates(xyzquat[:3], q)
-            co_rarm = co_rarm.transform(self.co_handle)
-            solve_ik(self.pr2, co_rarm)
+            co_rarm2handle = Coordinates(xyzquat[:3], q)
+            co_rarm2world = self.get_wrt_world(co_rarm2handle)
+            traj.append(co_rarm2world)
+
+        for co_rarm2world in traj:
+            create_debug_axis(co_rarm2world)
+
+        for co_rarm2world in traj:
+            solve_ik(self.pr2, co_rarm2world)
             self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--nogui", action="store_true")
     args = parser.parse_args()
-    world = World(gui=args.gui)
+    world = World(gui=not args.nogui)
     world.reset()
-    print(world.co_handle)
-    world.set_cup_position_offset(np.array([+0.12, -0.0, 0.0]), -0.0)
-    print(world.co_handle)
-    world.reproduce_grasping_trajectory(world.relative_grasping_trajectory)
+    create_debug_axis(world.co_handle)
+    # world.set_cup_position_offset(np.array([0.15, -0.15, 0.0]), -0.0)
+    world.set_cup_position_offset(np.zeros(3), +0.3)
+    world.reproduce_grasping_dmp(world.relative_grasping_dmp)
+    # create_debug_axis(world.co_handle)
     time.sleep(1.0)
     # world.reset()
     import time
-
     time.sleep(1000)
