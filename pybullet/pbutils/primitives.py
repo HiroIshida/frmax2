@@ -5,6 +5,7 @@ from typing import Callable, Optional
 import numpy as np
 import trimesh
 from skrobot.coordinates import Coordinates
+from skrobot.coordinates.math import wxyz2xyzw
 from skrobot.model.link import Link
 from skrobot.model.primitives import Box, MeshLink
 
@@ -16,7 +17,9 @@ class PybulletPrimitiveMixIn:
     obj: Link
 
     def set_coords(self, co: Coordinates):
-        pybullet.resetBasePositionAndOrientation(self.id_value, co.worldpos(), co.quaternion)
+        pybullet.resetBasePositionAndOrientation(
+            self.id_value, co.worldpos(), wxyz2xyzw(co.quaternion)
+        )
         self.obj.newcoords(co)
 
 
