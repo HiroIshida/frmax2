@@ -5,7 +5,6 @@ import time
 from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
-from typing import List
 
 import numpy as np
 import pybullet_data
@@ -99,7 +98,6 @@ class World:
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
         self.relative_grasping_dmp  # cached property compute cache now
-        self.relative_grasping_coords
 
     @property
     def co_handle(self) -> Coordinates:
@@ -146,20 +144,6 @@ class World:
         return tf_g2w.to_skrobot_coords()
 
     @cached_property
-    def relative_grasping_coords(self) -> List[Coordinates]:
-        co_grasp = self.co_grasp.copy_worldcoords()
-        n_split = 10
-
-        traj_co = [self.get_wrt_handle(co_grasp)]
-        slide_per_dt = 0.1 / n_split
-        for _ in range(n_split - 1):
-            co_grasp.translate([-slide_per_dt, 0, 0])
-            co_grasp_wrt_handle = self.get_wrt_handle(co_grasp)
-            traj_co.append(co_grasp_wrt_handle)
-        traj_co = traj_co[::-1]
-        return traj_co
-
-    @cached_property
     def relative_grasping_dmp(self) -> DMP:
         co_grasp = self.co_grasp.copy_worldcoords()
         n_split = 100
@@ -176,17 +160,6 @@ class World:
         dmp = DMP(7, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
         dmp.imitate(times, np.array(traj_xyzquat))
         return dmp
-
-    def reproduce_grasping_coords(self, traj_co: List[Coordinates]) -> None:
-        traj_co_grasp_wrt_world = [self.get_wrt_world(co) for co in traj_co]
-
-        # visualize
-        for co_grasp in traj_co_grasp_wrt_world:
-            create_debug_axis(co_grasp)
-
-        for co_grasp in traj_co_grasp_wrt_world:
-            solve_ik(self.pr2, co_grasp)
-            self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
     def reproduce_grasping_dmp(self, dmp: DMP) -> None:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
@@ -239,4 +212,5 @@ if __name__ == "__main__":
     world.set_cup_position_offset(np.zeros(3), +0.3)
     world.reproduce_grasping_dmp(world.relative_grasping_dmp)
     assert world.check_grasp_success()
+    world.reset()
     time.sleep(1000)
