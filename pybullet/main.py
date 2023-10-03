@@ -211,6 +211,23 @@ class World:
             solve_ik(self.pr2, co_rarm2world)
             self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
+        # finally grasp
+        self.pr2.gripper_distance(0.01)
+        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+
+    def check_grasp_success(self) -> bool:
+        co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
+        co_rarm_wrt_world.translate([0, 0, 0.05])
+        solve_ik(self.pr2, co_rarm_wrt_world)
+
+        self.cup.sync()
+        pos_pre_lift = self.cup.obj.worldpos()
+
+        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+        self.cup.sync()
+        pos_post_lift = self.cup.obj.worldpos()
+        return np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -219,11 +236,7 @@ if __name__ == "__main__":
     world = World(gui=not args.nogui)
     world.reset()
     create_debug_axis(world.co_handle)
-    # world.set_cup_position_offset(np.array([0.15, -0.15, 0.0]), -0.0)
     world.set_cup_position_offset(np.zeros(3), +0.3)
     world.reproduce_grasping_dmp(world.relative_grasping_dmp)
-    # create_debug_axis(world.co_handle)
-    time.sleep(1.0)
-    # world.reset()
-    import time
+    assert world.check_grasp_success()
     time.sleep(1000)
