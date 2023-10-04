@@ -11,7 +11,18 @@ from skrobot.models.pr2 import PR2
 logger = logging.getLogger(__name__)
 
 
-def solve_ik(
+def solve_ik(pr2: PR2, co: Coordinates) -> bool:
+    ret = pr2.inverse_kinematics(
+        co,
+        link_list=pr2.rarm.link_list,
+        move_target=pr2.rarm_end_coords,
+        rotation_axis=False,
+        stop=100,
+    )
+    return ret is not False  # ret may be angle
+
+
+def solve_ik_optimization(
     pr2: PR2, co: Coordinates, random_sampling: bool = False, sdf: Optional[Callable] = None
 ) -> bool:
     pr2_conf = PR2Config()
@@ -34,7 +45,6 @@ def solve_ik(
     else:
         res = satisfy_by_optimization(goal_eq_const, box_const, collfree_const, q_start)
     if not res.success:
-        logger.error(f"ik failed. attempted coordinate is {co}")
         return False
     set_robot_state(pr2, joint_list, res.q)
     return True

@@ -16,7 +16,7 @@ from movement_primitives.dmp import DMP as _DMP
 from movement_primitives.dmp import CartesianDMP as _CartesianDMP
 from pbutils.primitives import PybulletBox, PybulletMesh
 from pbutils.robot_interface import PybulletPR2
-from pbutils.utils import solve_ik
+from pbutils.utils import solve_ik, solve_ik_optimization
 from skrobot.coordinates import Coordinates
 from skrobot.coordinates.math import normalize_vector
 from skrobot.models.pr2 import PR2
@@ -26,6 +26,8 @@ import pybullet
 from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
 from frmax2.metric import CompositeMetric
 from frmax2.utils import create_default_logger
+
+logger = logging.getLogger(__name__)
 
 
 class CartesianDMP(_CartesianDMP):
@@ -125,7 +127,7 @@ class World:
         self.box = box
 
         # this come after setting the initial pose of the cup
-        solve_ik(pr2, self.co_grasp_pre, sdf=box.sdf)
+        solve_ik_optimization(pr2, self.co_grasp_pre, sdf=box.sdf)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
@@ -276,7 +278,8 @@ class World:
                 create_debug_axis(co_rarm2world)
 
         for co_rarm2world in traj:
-            solve_ik(self.pr2, co_rarm2world)
+            if not solve_ik(self.pr2, co_rarm2world):
+                logger.error("ik failed in reproduce_grasping_dmp")
             self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
         # finally grasp
@@ -286,7 +289,8 @@ class World:
     def check_grasp_success(self) -> bool:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
         co_rarm_wrt_world.translate([0, 0, 0.05])
-        solve_ik(self.pr2, co_rarm_wrt_world)
+        if not solve_ik(self.pr2, co_rarm_wrt_world):
+            logger.error("ik failed in check_grasp_success")
 
         self.cup.sync()
         pos_pre_lift = self.cup.obj.worldpos()
