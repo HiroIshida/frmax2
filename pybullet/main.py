@@ -9,7 +9,7 @@ from typing import Optional
 
 import numpy as np
 import pybullet_data
-from movement_primitives.dmp import DMP  # 0.5.0
+from movement_primitives.dmp import CartesianDMP
 from pbutils.primitives import PybulletBox, PybulletMesh
 from pbutils.robot_interface import PybulletPR2
 from pbutils.utils import solve_ik
@@ -166,7 +166,7 @@ class World:
         return tf_g2w.to_skrobot_coords()
 
     @cached_property
-    def relative_grasping_dmp(self) -> DMP:
+    def relative_grasping_dmp(self) -> CartesianDMP:
         co_grasp = self.co_grasp.copy_worldcoords()
         n_split = 100
         traj_co = [self.get_wrt_handle(co_grasp)]
@@ -179,11 +179,13 @@ class World:
         traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
 
         times = np.linspace(0, 1, n_split)
-        dmp = DMP(7, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+        dmp = CartesianDMP(execution_time=1.0, n_weights_per_dim=10, dt=0.1)
         dmp.imitate(times, np.array(traj_xyzquat))
         return dmp
 
-    def reproduce_grasping_dmp(self, dmp: DMP, recog_error: Optional[np.ndarray] = None) -> None:
+    def reproduce_grasping_dmp(
+        self, dmp: CartesianDMP, recog_error: Optional[np.ndarray] = None
+    ) -> None:
         if recog_error is None:
             recog_error = np.zeros(3)
 
@@ -230,12 +232,18 @@ class World:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--nogui", action="store_true")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+
+    np.random.seed(args.seed)
     world = World(gui=not args.nogui)
     world.reset()
     create_debug_axis(world.co_handle)
     world.set_cup_position_offset(np.zeros(3), +0.3)
-    world.reproduce_grasping_dmp(world.relative_grasping_dmp, np.array([0.0, 0.0, -0.3]))
+    dmp = world.relative_grasping_dmp
+    W = dmp.forcing_term_pos.weights
+    dmp.forcing_term_pos.weights[:2, :] += np.random.randn(*W.shape)[:2, :] * 50
+    world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
     assert world.check_grasp_success()
     world.reset()
     time.sleep(1000)
