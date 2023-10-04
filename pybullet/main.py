@@ -203,7 +203,10 @@ class World:
         return dmp
 
     def reproduce_grasping_dmp(
-        self, dmp: CartesianDMP, recog_error: Optional[np.ndarray] = None
+        self,
+        dmp: CartesianDMP,
+        recog_error: Optional[np.ndarray] = None,
+        show_debug_axis: bool = False,
     ) -> None:
         if recog_error is None:
             recog_error = np.zeros(3)
@@ -223,8 +226,9 @@ class World:
             co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
             traj.append(co_rarm2world)
 
-        for co_rarm2world in traj:
-            create_debug_axis(co_rarm2world)
+        if show_debug_axis:
+            for co_rarm2world in traj:
+                create_debug_axis(co_rarm2world)
 
         for co_rarm2world in traj:
             solve_ik(self.pr2, co_rarm2world)
