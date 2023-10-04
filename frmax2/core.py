@@ -147,16 +147,25 @@ class ActiveSamplerBase(ABC):
 
 class HolllessActiveSampler(ActiveSamplerBase):
     def update_metric(self) -> None:
+        logger.debug("update non-parameter-side metric")
+
         ls_co = np.sqrt(np.diag(self.metric.metirics[1].cmat))
+        logger.debug(f"current ls_co: {ls_co}")
+
         param_pre = self.X[-1][self.axes_param]
         width = self.compute_sliced_widths(param_pre)
         ls_co_cand = width * 0.25
+        logger.debug(f"current ls_co_cand: {ls_co_cand}")
 
         r = 1.5
         ls_co_min = ls_co * (1 / r)
         ls_co_max = ls_co * r
+        logger.debug(f"ls_co_min: {ls_co_min}, ls_co_max: {ls_co_max}")
         ls_co = np.max(np.vstack((ls_co_cand, ls_co_min)), axis=0)
         ls_co = np.min(np.vstack((ls_co, ls_co_max)), axis=0)
+
+        logger.debug(f"determined ls_co: {ls_co}")
+
         metric_co = Metric.from_ls(ls_co)
         new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
         self.metric = new_metric

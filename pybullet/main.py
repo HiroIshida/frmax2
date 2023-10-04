@@ -25,8 +25,7 @@ from utils import CoordinateTransform, chain_transform
 import pybullet
 from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
 from frmax2.metric import CompositeMetric
-
-logger = logging.getLogger(__name__)
+from frmax2.utils import create_default_logger
 
 
 class CartesianDMP(_CartesianDMP):
@@ -260,7 +259,7 @@ class RobustGraspTrainer:
 
     def __init__(self, world: World):
         self.world = world
-        ls_param = np.hstack([50 * np.ones(50), [0.1, 0.1]])
+        ls_param = np.hstack([100 * np.ones(50), [0.2, 0.2]])
         ls_error = 0.3 * np.ones(2)
         param_init = np.zeros(52)
         X, Y, ls_error = initialize(
@@ -323,17 +322,12 @@ if __name__ == "__main__":
         world.set_cup_position_offset(np.zeros(3), +0.3)
         dmp = world.relative_grasping_dmp
         W = dmp.forcing_term_pos.weights
-        from pyinstrument import Profiler
-
-        profiler = Profiler()
-        profiler.start()
         world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
-        profiler.stop()
-        print(profiler.output_text(unicode=True, color=True, show_all=True))
         assert world.check_grasp_success()
         world.reset()
         time.sleep(1000)
     elif args.mode == "train":
+        create_default_logger(Path("./"), "train", logging.DEBUG)
         trainer = RobustGraspTrainer(world)
         trainer.train(args.n)
     elif args.mode == "test":
