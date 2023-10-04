@@ -7,7 +7,7 @@ import time
 from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
-from typing import ClassVar, Optional
+from typing import Callable, ClassVar, Optional
 
 import dill
 import numpy as np
@@ -225,6 +225,7 @@ class World:
             co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
             traj.append(co_rarm2world)
 
+        pybullet.removeAllUserDebugItems()
         if show_debug_axis:
             for co_rarm2world in traj:
                 create_debug_axis(co_rarm2world)
@@ -256,10 +257,18 @@ class RobustGraspTrainer:
     error_dim: ClassVar[int] = 2
     config: ActiveSamplerConfig
     sampler: HolllessActiveSampler
+    is_valid_error: Callable[[np.ndarray], bool]
 
     def __init__(self, world: World):
         self.world = world
-        ls_param = np.hstack([100 * np.ones(50), [0.2, 0.2]])
+
+        def is_valid_error(err: np.ndarray) -> bool:
+            return np.linalg.norm(err) < 0.1
+
+        self.is_valid_error = is_valid_error
+
+        # ls_param = np.hstack([100 * np.ones(50), [0.2, 0.2]])
+        ls_param = np.hstack([100 * np.ones(50), [0.01, 0.01]])
         ls_error = 0.3 * np.ones(2)
         param_init = np.zeros(52)
         X, Y, ls_error = initialize(
@@ -275,6 +284,8 @@ class RobustGraspTrainer:
     def rollout(self, x: np.ndarray) -> bool:
         param = x[: self.param_dim]
         error = x[self.param_dim :]
+        if not self.is_valid_error(error):
+            return False
         return self._rollout(param, error)
 
     def _rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
@@ -285,7 +296,7 @@ class RobustGraspTrainer:
 
         dmp = copy.deepcopy(self.world.relative_grasping_dmp)
         dmp.set_param(param)
-        self.world.reproduce_grasping_dmp(dmp, recog_error)
+        self.world.reproduce_grasping_dmp(dmp, recog_error, True)
         ret = self.world.check_grasp_success()
         self.world.reset()
         return ret
