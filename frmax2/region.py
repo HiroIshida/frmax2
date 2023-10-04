@@ -149,7 +149,7 @@ class SuperlevelSet:
     ) -> np.ndarray:
         surface = self.get_surface_by_slicing(point_slice, axes_slice, n_grid)
         if surface is None:
-            return np.zeros(self.dim)
+            return np.zeros(self.dim - len(axes_slice))
         co_points = surface.points
         b_min = np.min(co_points, axis=0)
         b_max = np.max(co_points, axis=0)
