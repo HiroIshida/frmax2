@@ -1,15 +1,19 @@
 import argparse
+import copy
+import logging
 import os
 import sys
 import time
 from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar, Optional
 
+import dill
 import numpy as np
 import pybullet_data
-from movement_primitives.dmp import CartesianDMP
+from frmax.initialize import initialize
+from movement_primitives.dmp import CartesianDMP as _CartesianDMP
 from pbutils.primitives import PybulletBox, PybulletMesh
 from pbutils.robot_interface import PybulletPR2
 from pbutils.utils import solve_ik
@@ -19,6 +23,21 @@ from skrobot.models.pr2 import PR2
 from utils import CoordinateTransform, chain_transform
 
 import pybullet
+from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
+from frmax2.metric import CompositeMetric
+
+logger = logging.getLogger(__name__)
+
+
+class CartesianDMP(_CartesianDMP):
+    def set_param(self, param: np.ndarray) -> None:
+        dof = self.n_weights_per_dim * 5 + 2  # +2 for goal parameter currently only for 2d pos
+        assert len(param) == dof
+        W = param[:-2].reshape(5, self.n_weights_per_dim)
+        self.forcing_term_pos.weights[:2, :] = W[:2, :]
+        self.forcing_term_rot.weights = W[2:, :]
+        goal_param = param[-2:]
+        self.goal_y[:2] = goal_param
 
 
 # copied from: https://github.com/bulletphysics/bullet3/issues/2170
@@ -229,21 +248,92 @@ class World:
         return np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
 
 
+class RobustGraspTrainer:
+    param_dim: ClassVar[int] = 50 + 2
+    error_dim: ClassVar[int] = 2
+    config: ActiveSamplerConfig
+    sampler: HolllessActiveSampler
+
+    def __init__(self, world: World):
+        self.world = world
+        ls_param = np.hstack([50 * np.ones(50), [0.1, 0.1]])
+        ls_error = 0.3 * np.ones(2)
+        param_init = np.zeros(52)
+        X, Y, ls_error = initialize(
+            lambda x: +1 if self.rollout(x) else -1, param_init, ls_error, eps=0.2
+        )
+
+        metric = CompositeMetric.from_ls_list([ls_param, ls_error])
+        config = ActiveSamplerConfig()
+        sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
+        self.config = config
+        self.sampler = sampler
+
+    def rollout(self, x: np.ndarray) -> bool:
+        param = x[: self.param_dim]
+        error = x[self.param_dim :]
+        return self._rollout(param, error)
+
+    def _rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
+        is_pos_only = len(recog_error) == 2
+        assert is_pos_only
+        if is_pos_only:
+            recog_error = np.hstack([recog_error, 0.0])
+
+        dmp = copy.deepcopy(self.world.relative_grasping_dmp)
+        dmp.set_param(param)
+        self.world.reproduce_grasping_dmp(dmp, recog_error)
+        ret = self.world.check_grasp_success()
+        self.world.reset()
+        return ret
+
+    def train(self, n_iter) -> None:
+        for i in range(n_iter):
+            print(f"iter: {i}")
+            x = self.sampler.ask()
+            self.sampler.tell(x, self.rollout(x))
+            with open("cache.pkl", "wb") as f:
+                dill.dump(self.sampler, f)
+
+
+def load_sampler() -> HolllessActiveSampler:
+    with open("cache.pkl", "rb") as f:
+        sampler = dill.load(f)
+    return sampler
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--nogui", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n", type=int, default=300)
+    parser.add_argument("--mode", type=str, default="train")
     args = parser.parse_args()
 
     np.random.seed(args.seed)
     world = World(gui=not args.nogui)
     world.reset()
-    create_debug_axis(world.co_handle)
-    world.set_cup_position_offset(np.zeros(3), +0.3)
-    dmp = world.relative_grasping_dmp
-    W = dmp.forcing_term_pos.weights
-    dmp.forcing_term_pos.weights[:2, :] += np.random.randn(*W.shape)[:2, :] * 50
-    world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
-    assert world.check_grasp_success()
-    world.reset()
-    time.sleep(1000)
+
+    if args.mode == "debug":
+        create_debug_axis(world.co_handle)
+        world.set_cup_position_offset(np.zeros(3), +0.3)
+        dmp = world.relative_grasping_dmp
+        W = dmp.forcing_term_pos.weights
+        dmp.set_param(np.random.randn(50) * 50)
+        # dmp.forcing_term_pos.weights[:2, :] += np.random.randn(*W.shape)[:2, :] * 50
+        world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
+        assert world.check_grasp_success()
+        world.reset()
+        time.sleep(1000)
+    elif args.mode == "train":
+        trainer = RobustGraspTrainer(world)
+        trainer.train(args.n)
+    elif args.mode == "test":
+        sampler = load_sampler()
+        param = sampler.best_param_so_far
+        dmp = copy.deepcopy(world.relative_grasping_dmp)
+        dmp.set_param(param)
+        world.reproduce_grasping_dmp(dmp, np.array([-0.1, -0.1, 0.0]))
+        time.sleep(1000)
+    else:
+        assert False
