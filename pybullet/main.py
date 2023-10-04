@@ -319,9 +319,13 @@ if __name__ == "__main__":
         world.set_cup_position_offset(np.zeros(3), +0.3)
         dmp = world.relative_grasping_dmp
         W = dmp.forcing_term_pos.weights
-        dmp.set_param(np.random.randn(50) * 50)
-        # dmp.forcing_term_pos.weights[:2, :] += np.random.randn(*W.shape)[:2, :] * 50
+        from pyinstrument import Profiler
+
+        profiler = Profiler()
+        profiler.start()
         world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
+        profiler.stop()
+        print(profiler.output_text(unicode=True, color=True, show_all=True))
         assert world.check_grasp_success()
         world.reset()
         time.sleep(1000)
@@ -331,6 +335,7 @@ if __name__ == "__main__":
     elif args.mode == "test":
         sampler = load_sampler()
         param = sampler.best_param_so_far
+        print(param[-2:])
         dmp = copy.deepcopy(world.relative_grasping_dmp)
         dmp.set_param(param)
         world.reproduce_grasping_dmp(dmp, np.array([-0.1, -0.1, 0.0]))

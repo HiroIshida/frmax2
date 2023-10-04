@@ -86,9 +86,10 @@ class PybulletPR2:
     def _set_q(self, q: np.ndarray) -> None:
         for pb_joint_id, angle in zip(self.pb_joint_ids, q):
             pybullet.resetJointState(self.robot_id, pb_joint_id, angle)
+
+        pybullet.stepSimulation()
+        while not self.is_environment_static():
             pybullet.stepSimulation()
-            while not self.is_environment_static():
-                pybullet.stepSimulation()
 
     def set_q(self, q_target: np.ndarray, simulate: bool = True, t_sleep: float = 0.0) -> None:
         if simulate:
