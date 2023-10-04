@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, Optional
 
 from skmp.constraint import CollFreeConst, PoseConstraint
@@ -6,6 +7,8 @@ from skmp.robot.utils import get_robot_state, set_robot_state
 from skmp.satisfy import satisfy_by_optimization, satisfy_by_optimization_with_budget
 from skrobot.coordinates import Coordinates
 from skrobot.models.pr2 import PR2
+
+logger = logging.getLogger(__name__)
 
 
 def solve_ik(
@@ -31,6 +34,7 @@ def solve_ik(
     else:
         res = satisfy_by_optimization(goal_eq_const, box_const, collfree_const, q_start)
     if not res.success:
+        logger.error(f"ik failed. attempted coordinate is {co}")
         return False
     set_robot_state(pr2, joint_list, res.q)
     return True
