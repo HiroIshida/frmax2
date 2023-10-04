@@ -327,13 +327,12 @@ if __name__ == "__main__":
         world.reset()
         time.sleep(1000)
     elif args.mode == "train":
-        create_default_logger(Path("./"), "train", logging.DEBUG)
+        create_default_logger(Path("./"), "train", logging.INFO)
         trainer = RobustGraspTrainer(world)
         trainer.train(args.n)
     elif args.mode == "test":
         sampler = load_sampler()
         param = sampler.best_param_so_far
-        print(param[-2:])
         dmp = copy.deepcopy(world.relative_grasping_dmp)
         dmp.set_param(param)
         world.reproduce_grasping_dmp(dmp, np.array([-0.1, -0.1, 0.0]))
