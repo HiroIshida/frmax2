@@ -5,14 +5,14 @@ import os
 import sys
 import time
 from contextlib import contextmanager
-from functools import cached_property
 from pathlib import Path
-from typing import Callable, ClassVar, Optional
+from typing import Callable, ClassVar, Literal, Optional, Union, overload
 
 import dill
 import numpy as np
 import pybullet_data
 from frmax.initialize import initialize
+from movement_primitives.dmp import DMP as _DMP
 from movement_primitives.dmp import CartesianDMP as _CartesianDMP
 from pbutils.primitives import PybulletBox, PybulletMesh
 from pbutils.robot_interface import PybulletPR2
@@ -35,6 +35,18 @@ class CartesianDMP(_CartesianDMP):
         W = param[:-2].reshape(5, self.n_weights_per_dim)
         self.forcing_term_pos.weights[:2, :] = W[:2, :]
         self.forcing_term_rot.weights = W[2:, :]
+        goal_param = param[-2:]
+        self.goal_y[:2] = goal_param
+
+
+class DMP(_DMP):
+    def set_param(self, param: np.ndarray) -> None:
+        n_dim = 3
+        dof = self.n_weights_per_dim * n_dim + 2  # +2 for goal parameter currently only for 2d pos
+        assert len(param) == dof
+        W = param[:-2].reshape(n_dim, self.n_weights_per_dim)
+        self.forcing_term.weights[:2, :] = W[:2, :]
+        self.forcing_term.weights[3, :] = W[2:, :]
         goal_param = param[-2:]
         self.goal_y[:2] = goal_param
 
@@ -116,7 +128,6 @@ class World:
         solve_ik(pr2, self.co_grasp_pre, sdf=box.sdf)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
-        self.relative_grasping_dmp  # cached property compute cache now
 
     @property
     def co_handle(self) -> Coordinates:
@@ -183,8 +194,15 @@ class World:
         tf_g2w = chain_transform(tf_g2h, tf_h2w)
         return tf_g2w.to_skrobot_coords()
 
-    @cached_property
-    def relative_grasping_dmp(self) -> CartesianDMP:
+    @overload
+    def get_relative_grasping_dmp(self, mode: Literal["quat"]) -> CartesianDMP:
+        ...
+
+    @overload
+    def get_relative_grasping_dmp(self, mode: Literal["yaw"]) -> DMP:
+        ...
+
+    def get_relative_grasping_dmp(self, mode: Literal["quat", "yaw"] = "yaw"):
         co_grasp = self.co_grasp.copy_worldcoords()
         n_split = 100
         traj_co = [self.get_wrt_handle(co_grasp)]
@@ -194,16 +212,26 @@ class World:
             traj_co.append(self.get_wrt_handle(co_grasp))
 
         traj_co = traj_co[::-1]
-        traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
-
         times = np.linspace(0, 1, n_split)
-        dmp = CartesianDMP(execution_time=1.0, n_weights_per_dim=10, dt=0.1)
-        dmp.imitate(times, np.array(traj_xyzquat))
+
+        if mode == "quat":
+            traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
+            dmp = CartesianDMP(execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+            dmp.imitate(times, np.array(traj_xyzquat))
+        else:
+            traj_xyzyaw = []
+            for co in traj_co:
+                yaw = co.rpy_angle()[0][0]
+                vec = np.hstack([co.worldpos(), yaw])
+                traj_xyzyaw.append(vec)
+            traj_xyzyaw = np.array(traj_xyzyaw)
+            dmp = DMP(4, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+            dmp.imitate(times, np.array(traj_xyzyaw))
         return dmp
 
     def reproduce_grasping_dmp(
         self,
-        dmp: CartesianDMP,
+        dmp: Union[CartesianDMP, DMP],
         recog_error: Optional[np.ndarray] = None,
         show_debug_axis: bool = False,
     ) -> None:
@@ -213,17 +241,34 @@ class World:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
         co_rarm_wrt_handle = self.get_wrt_handle(co_rarm_wrt_world, recog_error)
 
-        xyzquat_start = np.hstack([co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion])
-        dmp.reset()
-        dmp.configure(start_y=xyzquat_start)
-        T, xyzquat_list = dmp.open_loop()
+        if isinstance(dmp, CartesianDMP):
+            xyzquat_start = np.hstack(
+                [co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.quaternion]
+            )
+            dmp.reset()
+            dmp.configure(start_y=xyzquat_start)
+            T, xyzquat_list = dmp.open_loop()
 
-        traj = []
-        for xyzquat in xyzquat_list:
-            q = normalize_vector(xyzquat[3:])
-            co_rarm2handle = Coordinates(xyzquat[:3], q)
-            co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
-            traj.append(co_rarm2world)
+            traj = []
+            for xyzquat in xyzquat_list:
+                q = normalize_vector(xyzquat[3:])
+                co_rarm2handle = Coordinates(xyzquat[:3], q)
+                co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
+                traj.append(co_rarm2world)
+        else:
+            xyzyaw = np.hstack(
+                [co_rarm_wrt_handle.worldpos(), co_rarm_wrt_handle.rpy_angle()[0][0]]
+            )
+            dmp.reset()
+            dmp.configure(start_y=xyzyaw)
+            T, xyzyaw_list = dmp.open_loop()
+
+            traj = []
+            for xyzyaw in xyzyaw_list:
+                co_rarm2handle = Coordinates(xyzyaw[:3])
+                co_rarm2handle.rotate(xyzyaw[3], "z", wrt="local")
+                co_rarm2world = self.get_wrt_world(co_rarm2handle, recog_error)
+                traj.append(co_rarm2world)
 
         pybullet.removeAllUserDebugItems()
         if show_debug_axis:
@@ -253,7 +298,7 @@ class World:
 
 
 class RobustGraspTrainer:
-    param_dim: ClassVar[int] = 50 + 2
+    param_dim: ClassVar[int] = 30 + 2
     error_dim: ClassVar[int] = 2
     config: ActiveSamplerConfig
     sampler: HolllessActiveSampler
@@ -268,9 +313,9 @@ class RobustGraspTrainer:
         self.is_valid_error = is_valid_error
 
         # ls_param = np.hstack([100 * np.ones(50), [0.2, 0.2]])
-        ls_param = np.hstack([100 * np.ones(50), [0.01, 0.01]])
+        ls_param = np.hstack([100 * np.ones(30), [0.01, 0.01]])
         ls_error = 0.3 * np.ones(2)
-        param_init = np.zeros(52)
+        param_init = np.zeros(32)
         X, Y, ls_error = initialize(
             lambda x: +1 if self.rollout(x) else -1, param_init, ls_error, eps=0.2
         )
@@ -294,7 +339,7 @@ class RobustGraspTrainer:
         if is_pos_only:
             recog_error = np.hstack([recog_error, 0.0])
 
-        dmp = copy.deepcopy(self.world.relative_grasping_dmp)
+        dmp = copy.deepcopy(self.world.get_relative_grasping_dmp())
         dmp.set_param(param)
         self.world.reproduce_grasping_dmp(dmp, recog_error, True)
         ret = self.world.check_grasp_success()
@@ -331,8 +376,7 @@ if __name__ == "__main__":
     if args.mode == "debug":
         create_debug_axis(world.co_handle)
         world.set_cup_position_offset(np.zeros(3), +0.3)
-        dmp = world.relative_grasping_dmp
-        W = dmp.forcing_term_pos.weights
+        dmp = world.get_relative_grasping_dmp()
         world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
         assert world.check_grasp_success()
         world.reset()
@@ -344,9 +388,10 @@ if __name__ == "__main__":
     elif args.mode == "test":
         sampler = load_sampler()
         param = sampler.best_param_so_far
-        dmp = copy.deepcopy(world.relative_grasping_dmp)
+        dmp = copy.deepcopy(world.get_relative_grasping_dmp())
         dmp.set_param(param)
-        world.reproduce_grasping_dmp(dmp, np.array([-0.1, -0.1, 0.0]))
+        world.reproduce_grasping_dmp(dmp, np.array([-0.0, -0.0, 0.0]))
+        world.check_grasp_success()
         time.sleep(1000)
     else:
         assert False
