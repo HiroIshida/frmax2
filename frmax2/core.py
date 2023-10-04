@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
@@ -6,6 +7,8 @@ import numpy as np
 
 from frmax2.metric import CompositeMetric, Metric
 from frmax2.region import SuperlevelSet, get_co_axes
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,6 +21,15 @@ class ActiveSamplerConfig:
     c_svm: float = 1e4
 
 
+class SamplerCache:
+    best_param_history: List[np.ndarray]
+    best_volume_history: List[float]
+
+    def __init__(self):
+        self.best_param_history = []
+        self.best_volume_history = []
+
+
 class ActiveSamplerBase(ABC):
     fslset: SuperlevelSet
     metric: CompositeMetric
@@ -27,6 +39,7 @@ class ActiveSamplerBase(ABC):
     X: np.ndarray
     Y: np.ndarray
     axes_param: List[int]
+    sampler_cache: SamplerCache
 
     def __init__(
         self,
@@ -47,6 +60,7 @@ class ActiveSamplerBase(ABC):
         self.X = X
         self.Y = Y
         self.axes_param = list(range(len(param_init)))
+        self.sampler_cache = SamplerCache()
 
     @abstractmethod
     def compute_sliced_volume(self, param: np.ndarray) -> float:
@@ -79,10 +93,12 @@ class ActiveSamplerBase(ABC):
                 filtered = list(filter(self.is_valid_param, rand_params))
                 if len(filtered) > 0:
                     return np.array(filtered)
-                print("sample from ball again as no samples satisfies constraint")
+                logger.debug("sample from ball again as no samples satisfies constraint")
 
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
+        self.sampler_cache.best_param_history.append(param_metric)
+        self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
 
         trial_count = 0
         r = self.config.r_exploration
@@ -120,7 +136,7 @@ class ActiveSamplerBase(ABC):
         assert x_best is not None
         return x_best
 
-    def tell(self, x: np.ndarray, y: bool, update_clf: bool = True) -> None:
+    def tell(self, x: np.ndarray, y: bool) -> None:
         self.update_metric()
         X = np.vstack([self.X, x])
         Y = np.hstack([self.Y, y])
