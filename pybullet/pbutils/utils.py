@@ -16,7 +16,7 @@ def solve_ik(pr2: PR2, co: Coordinates) -> bool:
         co,
         link_list=pr2.rarm.link_list,
         move_target=pr2.rarm_end_coords,
-        rotation_axis=False,
+        rotation_axis=True,
         stop=100,
     )
     return ret is not False  # ret may be angle

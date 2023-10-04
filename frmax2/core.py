@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ActiveSamplerConfig:
-    n_mc_param_search: int = 20
+    n_mc_param_search: int = 300
     r_exploration: float = 0.5
-    n_grid: int = 10
+    n_grid: int = 20
     aabb_margin: float = 0.5
     n_mc_integral: int = 100
     c_svm: float = 1e4

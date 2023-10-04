@@ -4,13 +4,16 @@ import logging
 import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, ClassVar, Literal, Optional, Union, overload
+from typing import Callable, Literal, Optional, Union, overload
 
 import dill
+import matplotlib.pyplot as plt
 import numpy as np
 import pybullet_data
+import tqdm
 from frmax.initialize import initialize
 from movement_primitives.dmp import DMP as _DMP
 from movement_primitives.dmp import CartesianDMP as _CartesianDMP
@@ -44,13 +47,17 @@ class CartesianDMP(_CartesianDMP):
 class DMP(_DMP):
     def set_param(self, param: np.ndarray) -> None:
         n_dim = 3
-        dof = self.n_weights_per_dim * n_dim + 2  # +2 for goal parameter currently only for 2d pos
+        n_goal_dim = 3
+        dof = self.n_weights_per_dim * n_dim + n_goal_dim
         assert len(param) == dof
-        W = param[:-2].reshape(n_dim, self.n_weights_per_dim)
-        self.forcing_term.weights[:2, :] = W[:2, :]
-        self.forcing_term.weights[3, :] = W[2:, :]
-        goal_param = param[-2:]
-        self.goal_y[:2] = goal_param
+        W = param[:-n_goal_dim].reshape(n_dim, self.n_weights_per_dim)
+        self.forcing_term.weights[:2, :] += W[:2, :]
+        self.forcing_term.weights[3, :] += W[2, :]
+
+        # set goal param
+        goal_param = param[-n_goal_dim:]
+        self.goal_y[:2] += goal_param[:2]
+        self.goal_y[3] += goal_param[2]
 
 
 # copied from: https://github.com/bulletphysics/bullet3/issues/2170
@@ -130,6 +137,19 @@ class World:
         solve_ik_optimization(pr2, self.co_grasp_pre, sdf=box.sdf)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
+
+    def rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
+        is_pos_only = len(recog_error) == 2
+        assert is_pos_only
+        if is_pos_only:
+            recog_error = np.hstack([recog_error, 0.0])
+
+        dmp = copy.deepcopy(self.get_relative_grasping_dmp())
+        dmp.set_param(param)
+        self.reproduce_grasping_dmp(dmp, recog_error, True)
+        ret = self.check_grasp_success()
+        self.reset()
+        return ret
 
     @property
     def co_handle(self) -> Coordinates:
@@ -301,9 +321,19 @@ class World:
         return np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
 
 
+def _process_pool_setup():
+    global _pp_world
+    _pp_world = World(gui=False)
+    _pp_world.reset()
+
+
+def _process_pool_rollout(param: np.ndarray, error: np.ndarray) -> bool:
+    global _pp_world
+    return _pp_world.rollout(param, error)
+
+
 class RobustGraspTrainer:
-    param_dim: ClassVar[int] = 30 + 2
-    error_dim: ClassVar[int] = 2
+    param_dim: int
     config: ActiveSamplerConfig
     sampler: HolllessActiveSampler
     is_valid_error: Callable[[np.ndarray], bool]
@@ -316,12 +346,22 @@ class RobustGraspTrainer:
 
         self.is_valid_error = is_valid_error
 
-        # ls_param = np.hstack([100 * np.ones(50), [0.2, 0.2]])
-        ls_param = np.hstack([100 * np.ones(30), [0.01, 0.01]])
+        error_dim = 2
+        dmp_param_dim = 30
+        goal_param_dim = 3
+        self.param_dim = dmp_param_dim + goal_param_dim
+
+        # ls_param = np.hstack([100 * np.ones(dmp_param_dim), [0.01, 0.01, 0.1]])
+        ls_param = np.hstack([100 * np.ones(dmp_param_dim), [0.06, 0.06, 0.6]])
         ls_error = 0.3 * np.ones(2)
-        param_init = np.zeros(32)
+        param_init = np.zeros(self.param_dim)
+
+        # check if at least grasp succssfull with initial param and error 0
+        x = np.hstack([param_init, np.zeros(error_dim)])
+        assert self.rollout(x)
+
         X, Y, ls_error = initialize(
-            lambda x: +1 if self.rollout(x) else -1, param_init, ls_error, eps=0.2
+            lambda x: +1 if self.rollout(x) else -1, param_init, ls_error, eps=0.05
         )
 
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
@@ -333,21 +373,14 @@ class RobustGraspTrainer:
     def rollout(self, x: np.ndarray) -> bool:
         param = x[: self.param_dim]
         error = x[self.param_dim :]
-        if not self.is_valid_error(error):
-            return False
-        return self._rollout(param, error)
 
-    def _rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
-        is_pos_only = len(recog_error) == 2
-        assert is_pos_only
-        if is_pos_only:
-            recog_error = np.hstack([recog_error, 0.0])
-
-        dmp = copy.deepcopy(self.world.get_relative_grasping_dmp())
-        dmp.set_param(param)
-        self.world.reproduce_grasping_dmp(dmp, recog_error, True)
-        ret = self.world.check_grasp_success()
-        self.world.reset()
+        goal_param = param[-3:]
+        logger.info(f"rollout with goal param: {goal_param} and error: {error}")
+        logger.debug(f"rollout param: {param}")
+        ret = False
+        if self.is_valid_error(error):
+            ret = self.world.rollout(param, error)
+        logger.info(f"rollout result: {ret}")
         return ret
 
     def train(self, n_iter) -> None:
@@ -373,29 +406,66 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="train")
     args = parser.parse_args()
 
-    np.random.seed(args.seed)
-    world = World(gui=not args.nogui)
-    world.reset()
-
-    if args.mode == "debug":
-        create_debug_axis(world.co_handle)
-        world.set_cup_position_offset(np.zeros(3), +0.3)
-        dmp = world.get_relative_grasping_dmp()
-        world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
-        assert world.check_grasp_success()
+    if args.mode not in ("plot", "eval"):
+        np.random.seed(args.seed)
+        world = World(gui=not args.nogui)
         world.reset()
-        time.sleep(1000)
-    elif args.mode == "train":
-        create_default_logger(Path("./"), "train", logging.INFO)
-        trainer = RobustGraspTrainer(world)
-        trainer.train(args.n)
-    elif args.mode == "test":
-        sampler = load_sampler()
-        param = sampler.best_param_so_far
-        dmp = copy.deepcopy(world.get_relative_grasping_dmp())
-        dmp.set_param(param)
-        world.reproduce_grasping_dmp(dmp, np.array([-0.0, -0.0, 0.0]))
-        world.check_grasp_success()
-        time.sleep(1000)
+
+        if args.mode == "debug":
+            dmp = world.get_relative_grasping_dmp()
+            dmp.set_param(np.zeros(33))
+            world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
+            assert world.check_grasp_success()
+            world.reset()
+            time.sleep(1000)
+        elif args.mode == "train":
+            create_default_logger(Path("./"), "train", logging.INFO)
+            trainer = RobustGraspTrainer(world)
+            trainer.train(args.n)
+        elif args.mode == "test":
+            sampler = load_sampler()
+            param = sampler.best_param_so_far
+            dmp = copy.deepcopy(world.get_relative_grasping_dmp())
+            dmp.set_param(param)
+            world.reproduce_grasping_dmp(dmp, np.array([0.0, -0.0, 0.0]))
+            world.check_grasp_success()
+            time.sleep(1000)
+        else:
+            assert False
     else:
-        assert False
+        if args.mode == "plot":
+            sampler = load_sampler()
+            fig, ax = plt.subplots()
+            ax.plot(sampler.sampler_cache.best_volume_history)
+            plt.show()
+        elif args.mode == "eval":
+
+            sampler = load_sampler()
+            param = sampler.best_param_so_far
+
+            fig, ax = plt.subplots()
+            sampler.fslset.show_sliced(param, list(range(len(param))), 30, (fig, ax))
+            ax.set_xlim([-0.15, 0.15])
+            ax.set_ylim([-0.15, 0.15])
+
+            error_x_lin = np.linspace(-0.1, 0.1, 10)
+            error_y_lin = np.linspace(-0.1, 0.1, 10)
+            error_x, error_y = np.meshgrid(error_x_lin, error_y_lin)
+            pts = np.vstack([error_x.flatten(), error_y.flatten()]).T
+            # bools = []
+            # world = World(gui=not args.nogui)
+            # world.reset()
+            # for error in tqdm.tqdm(pts):
+            #     ret = world.rollout(param, error)
+            #     bools.append(ret)
+            with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
+                bools = list(
+                    tqdm.tqdm(
+                        executor.map(_process_pool_rollout, [param] * len(pts), pts),
+                        total=len(pts),
+                    )
+                )
+            ax.scatter(pts[:, 0], pts[:, 1], c=bools)
+            plt.show()
+        else:
+            assert False

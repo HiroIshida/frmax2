@@ -155,6 +155,35 @@ class SuperlevelSet:
         b_max = np.max(co_points, axis=0)
         return b_max - b_min
 
+    def show_sliced(self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int, fax) -> None:
+        assert len(point_slice) == len(axes_slice)
+        axes_co = get_co_axes(self.dim, axes_slice)
+        assert len(axes_co) == 2
+        grid_points = self.create_grid_points(point_slice, axes_slice, n_grid)
+        values = self.func(grid_points)
+        data = values.reshape(n_grid, n_grid).T
+        X, Y = self.create_meshgrids(point_slice, axes_slice, n_grid)
+        fig, ax = fax
+        ax.contour(X, Y, data, levels=[0.0])
+
+    def create_meshgrids(
+        self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
+    ) -> List[np.ndarray]:
+        if point_slice is None:
+            assert len(axes_slice) == 0
+        else:
+            assert len(point_slice) == len(axes_slice)
+
+        # NOTE: co indicates a value is about complement axes
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+        linspace_comp_list = [
+            np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
+        ]
+        meshgrid_comp_list = np.meshgrid(*linspace_comp_list)
+        return list(meshgrid_comp_list)
+
     def create_grid_points(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
     ) -> np.ndarray:
