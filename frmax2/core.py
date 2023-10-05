@@ -40,6 +40,7 @@ class ActiveSamplerBase(ABC):
     Y: np.ndarray
     axes_param: List[int]
     sampler_cache: SamplerCache
+    count_additional: int
 
     def __init__(
         self,
@@ -61,6 +62,7 @@ class ActiveSamplerBase(ABC):
         self.Y = Y
         self.axes_param = list(range(len(param_init)))
         self.sampler_cache = SamplerCache()
+        self.count_additional = 0
 
     @abstractmethod
     def compute_sliced_volume(self, param: np.ndarray) -> float:
@@ -100,7 +102,7 @@ class ActiveSamplerBase(ABC):
         logger.debug(f"current best param: {param_center}")
         logger.info(f"current best volume: {self.compute_sliced_volume(param_center)}")
 
-        self.sampler_cache.best_param_history.append(param_metric)
+        self.sampler_cache.best_param_history.append(param_center)
         self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
 
         trial_count = 0
@@ -119,6 +121,7 @@ class ActiveSamplerBase(ABC):
         assert False
 
     def ask(self) -> np.ndarray:
+        assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
         # update param_best_so_far
         idx_max_volume = np.argmax(volumes)
@@ -138,6 +141,25 @@ class ActiveSamplerBase(ABC):
                     x_best = x
         assert x_best is not None
         return x_best
+
+    def ask_additional(self) -> np.ndarray:
+        param_here = self.best_param_so_far
+        sliced_points = self.sample_sliced_points(param_here)
+        if self.count_additional == 0:
+            e_new = sliced_points[0]  # because we cannot compare
+        else:
+            e_dim = sliced_points.shape[1]
+            E_additional_so_far = self.X[-self.count_additional :, -e_dim:]
+            e_metric = self.metric.metirics[1]
+            uncertainty_max = -np.inf
+            e_new = None
+            for e in sliced_points:
+                uncertainty = np.min(e_metric(e, E_additional_so_far))
+                if uncertainty > uncertainty_max:
+                    uncertainty_max = uncertainty
+                    e_new = e
+        self.count_additional += 1
+        return np.hstack([param_here, e_new])
 
     def tell(self, x: np.ndarray, y: bool) -> None:
         self.update_metric()
