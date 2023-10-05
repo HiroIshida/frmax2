@@ -134,12 +134,27 @@ class World:
         self.box = box
 
         # this come after setting the initial pose of the cup
-        solve_ik_optimization(pr2, self.co_grasp_pre(), sdf=box.sdf)
+        assert solve_ik_optimization(pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
+    def initialize_pr2_configuration_with_recog_error(self, recog_error: np.ndarray) -> None:
+        assert len(recog_error) == 2
+        co_handle_recog = self.co_handle.copy_worldcoords()
+        recog_error = np.hstack([recog_error[:2], 0.0])
+        co_handle_recog.translate(recog_error, wrt="world")
+        co_grasp_pre = self.co_grasp_pre(co_handle_recog)
+        logger.info(f"attempted with co_grasp_pre: {co_grasp_pre}")
+        if not solve_ik_optimization(
+            self.pr2, co_grasp_pre, sdf=self.box.sdf, random_sampling=True
+        ):
+            logger.error("ik failed in initialize_pr2_configuration_with_recog_error")
+            assert False
+        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=False)
+
     def rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
         is_pos_only = len(recog_error) == 2
+        self.initialize_pr2_configuration_with_recog_error(recog_error)
         assert is_pos_only
         if is_pos_only:
             recog_error = np.hstack([recog_error, 0.0])
