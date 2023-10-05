@@ -134,7 +134,7 @@ class World:
         self.box = box
 
         # this come after setting the initial pose of the cup
-        solve_ik_optimization(pr2, self.co_grasp_pre, sdf=box.sdf)
+        solve_ik_optimization(pr2, self.co_grasp_pre(), sdf=box.sdf)
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
@@ -159,16 +159,16 @@ class World:
         co_handle.translate([0.0, -0.12, 0.0])
         return co_handle
 
-    @property
-    def co_grasp(self) -> Coordinates:
-        co_grasp = self.co_handle.copy_worldcoords()
+    def co_grasp(self, co_handle_recog: Optional[Coordinates] = None) -> Coordinates:
+        if co_handle_recog is None:
+            co_handle_recog = self.co_handle
+        co_grasp = co_handle_recog.copy_worldcoords()
         co_grasp.rotate(0.3, "z")
         co_grasp.translate([0.02, -0.015, 0.0])
         return co_grasp
 
-    @property
-    def co_grasp_pre(self) -> Coordinates:
-        co_grasp_pre = self.co_grasp.copy_worldcoords()
+    def co_grasp_pre(self, co_handle_recog: Optional[Coordinates] = None) -> Coordinates:
+        co_grasp_pre = self.co_grasp(co_handle_recog).copy_worldcoords()
         co_grasp_pre.translate([-0.1, -0.0, 0.0])
         return co_grasp_pre
 
@@ -225,7 +225,7 @@ class World:
         ...
 
     def get_relative_grasping_dmp(self, mode: Literal["quat", "yaw"] = "yaw"):
-        co_grasp = self.co_grasp.copy_worldcoords()
+        co_grasp = self.co_grasp().copy_worldcoords()
         n_split = 100
         traj_co = [self.get_wrt_handle(co_grasp)]
         slide_per_dt = 0.1 / n_split
