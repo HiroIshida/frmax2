@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import cached_property
 from typing import List
 
 import numpy as np
@@ -13,7 +14,7 @@ class MetricBase(ABC):
     def cmat(self) -> np.ndarray:
         ...
 
-    @property
+    @cached_property
     def tensor(self):
         return np.linalg.inv(self.cmat)
 
