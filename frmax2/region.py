@@ -161,7 +161,7 @@ class SuperlevelSet:
         assert len(axes_co) == 2
         grid_points = self.create_grid_points(point_slice, axes_slice, n_grid)
         values = self.func(grid_points)
-        data = values.reshape(n_grid, n_grid).T
+        data = values.reshape(n_grid, n_grid)
         X, Y = self.create_meshgrids(point_slice, axes_slice, n_grid)
         fig, ax = fax
         ax.contour(X, Y, data, levels=[0.0])
