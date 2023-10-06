@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Literal, Optional, Union, overload
@@ -99,8 +98,9 @@ class World:
     pr2: PR2
     cup: PybulletMesh
     box: PybulletBox
+    n_weigth_per_dim: int
 
-    def __init__(self, gui: bool = False):
+    def __init__(self, gui: bool = False, n_weigth_per_dim: int = 10):
         if gui:
             pybullet.connect(pybullet.GUI)
         else:
@@ -125,13 +125,14 @@ class World:
 
         pr2.reset_manip_pose()
         pr2.gripper_distance(0.05)
-        ri.set_q(pr2.angle_vector(), t_sleep=0.01, simulate=False)
+        ri.set_q(pr2.angle_vector(), t_sleep=0.01, simulate=False, simulate_lower=False)
 
         self.mesh_pose_init = cup.obj.copy_worldcoords()
         self.ri = ri
         self.pr2 = pr2
         self.cup = cup
         self.box = box
+        self.n_weigth_per_dim = n_weigth_per_dim
 
         # this come after setting the initial pose of the cup
         assert solve_ik_optimization(pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True)
@@ -150,11 +151,17 @@ class World:
         ):
             logger.error("ik failed in initialize_pr2_configuration_with_recog_error")
             assert False
-        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=False)
+        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=False, simulate_lower=False)
 
     def rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
         is_pos_only = len(recog_error) == 2
+        self.reset()
         self.initialize_pr2_configuration_with_recog_error(recog_error)
+        pybullet.stepSimulation()  # this is needed to update the collision state
+        if self.ri.is_in_collision(self.cup.id_value):
+            logger.info("in collision. return False")
+            return False
+
         assert is_pos_only
         if is_pos_only:
             recog_error = np.hstack([recog_error, 0.0])
@@ -163,7 +170,6 @@ class World:
         dmp.set_param(param)
         self.reproduce_grasping_dmp(dmp, recog_error, True)
         ret = self.check_grasp_success()
-        self.reset()
         return ret
 
     @property
@@ -197,6 +203,7 @@ class World:
         self.pr2.angle_vector(self.av_init)
         self.ri.set_q(self.av_init, t_sleep=0.0, simulate=False)
         self.cup.set_coords(self.mesh_pose_init)
+        self.cup.pause()
 
     def get_wrt_handle(
         self, co_grasp2world: Coordinates, recog_error: Optional[np.ndarray] = None
@@ -253,7 +260,7 @@ class World:
 
         if mode == "quat":
             traj_xyzquat = np.array([np.hstack([co.worldpos(), co.quaternion]) for co in traj_co])
-            dmp = CartesianDMP(execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+            dmp = CartesianDMP(execution_time=1.0, n_weights_per_dim=self.n_weigth_per_dim, dt=0.1)
             dmp.imitate(times, np.array(traj_xyzquat))
         else:
             traj_xyzyaw = []
@@ -262,7 +269,7 @@ class World:
                 vec = np.hstack([co.worldpos(), yaw])
                 traj_xyzyaw.append(vec)
             traj_xyzyaw = np.array(traj_xyzyaw)
-            dmp = DMP(4, execution_time=1.0, n_weights_per_dim=10, dt=0.1)
+            dmp = DMP(4, execution_time=1.0, n_weights_per_dim=self.n_weigth_per_dim, dt=0.1)
             dmp.imitate(times, np.array(traj_xyzyaw))
         return dmp
 
@@ -333,7 +340,10 @@ class World:
         self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
         self.cup.sync()
         pos_post_lift = self.cup.obj.worldpos()
-        return np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
+        success = np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
+        # if success:
+        #     assert self.ri.is_in_collision(self.cup.id_value)
+        return success
 
 
 def _process_pool_setup():
@@ -353,7 +363,7 @@ class RobustGraspTrainer:
     sampler: HolllessActiveSampler
     is_valid_error: Callable[[np.ndarray], bool]
 
-    def __init__(self, world: World):
+    def __init__(self, world: World, n_weigth_per_dim: int = 10):
         self.world = world
 
         def is_valid_error(err: np.ndarray) -> bool:
@@ -362,7 +372,7 @@ class RobustGraspTrainer:
         self.is_valid_error = is_valid_error
 
         error_dim = 2
-        dmp_param_dim = 30
+        dmp_param_dim = n_weigth_per_dim * 3
         goal_param_dim = 3
         self.param_dim = dmp_param_dim + goal_param_dim
 
@@ -406,6 +416,13 @@ class RobustGraspTrainer:
             with open("cache.pkl", "wb") as f:
                 dill.dump(self.sampler, f)
 
+        for i in range(50):
+            print(f"additional iter: {i}")
+            x = self.sampler.ask_additional()
+            self.sampler.tell(x, self.rollout(x))
+            with open("cache.pkl", "wb") as f:
+                dill.dump(self.sampler, f)
+
 
 def load_sampler() -> HolllessActiveSampler:
     with open("cache.pkl", "rb") as f:
@@ -418,24 +435,27 @@ if __name__ == "__main__":
     parser.add_argument("--nogui", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n", type=int, default=300)
+    parser.add_argument("--m", type=int, default=10)
     parser.add_argument("--mode", type=str, default="train")
     args = parser.parse_args()
 
+    n_weigth_per_dim = args.m
+
     if args.mode not in ("plot", "eval"):
         np.random.seed(args.seed)
-        world = World(gui=not args.nogui)
+        world = World(gui=not args.nogui, n_weigth_per_dim=n_weigth_per_dim)
         world.reset()
 
         if args.mode == "debug":
             dmp = world.get_relative_grasping_dmp()
-            dmp.set_param(np.zeros(33))
+            dmp.set_param(np.zeros(n_weigth_per_dim * 3 + 2))
             world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
             assert world.check_grasp_success()
             world.reset()
             time.sleep(1000)
         elif args.mode == "train":
             create_default_logger(Path("./"), "train", logging.INFO)
-            trainer = RobustGraspTrainer(world)
+            trainer = RobustGraspTrainer(world, n_weigth_per_dim)
             trainer.train(args.n)
         elif args.mode == "test":
             sampler = load_sampler()
@@ -452,9 +472,11 @@ if __name__ == "__main__":
             sampler = load_sampler()
             fig, ax = plt.subplots()
             ax.plot(sampler.sampler_cache.best_volume_history)
+            # plt.show()
+            # show parameter
+            # ax.plot(np.array(sampler.sampler_cache.best_param_history))
             plt.show()
         elif args.mode == "eval":
-
             sampler = load_sampler()
             param = sampler.best_param_so_far
 
@@ -463,23 +485,25 @@ if __name__ == "__main__":
             ax.set_xlim([-0.15, 0.15])
             ax.set_ylim([-0.15, 0.15])
 
-            error_x_lin = np.linspace(-0.1, 0.1, 10)
-            error_y_lin = np.linspace(-0.1, 0.1, 10)
+            n_grid = 8
+            error_x_lin = np.linspace(-0.1, 0.1, n_grid)
+            error_y_lin = np.linspace(-0.1, 0.1, n_grid)
             error_x, error_y = np.meshgrid(error_x_lin, error_y_lin)
             pts = np.vstack([error_x.flatten(), error_y.flatten()]).T
-            # bools = []
-            # world = World(gui=not args.nogui)
-            # world.reset()
-            # for error in tqdm.tqdm(pts):
-            #     ret = world.rollout(param, error)
-            #     bools.append(ret)
-            with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
-                bools = list(
-                    tqdm.tqdm(
-                        executor.map(_process_pool_rollout, [param] * len(pts), pts),
-                        total=len(pts),
-                    )
-                )
+            bools = []
+            world = World(gui=not args.nogui, n_weigth_per_dim=n_weigth_per_dim)
+            world.reset()
+            for error in tqdm.tqdm(pts):
+                ret = world.rollout(param, error)
+                bools.append(ret)
+            # with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
+            #     bools = list(
+            #         tqdm.tqdm(
+            #             executor.map(_process_pool_rollout, [param] * len(pts), pts),
+            #             total=len(pts),
+            #         )
+            #     )
+            bools = np.array(bools).reshape(error_x.shape).T
             ax.scatter(pts[:, 0], pts[:, 1], c=bools)
             plt.show()
         else:
