@@ -64,9 +64,16 @@ class ActiveSamplerBase(ABC):
         self.sampler_cache = SamplerCache()
         self.count_additional = 0
 
+    @staticmethod
     @abstractmethod
+    def _compute_sliced_volume_inner(
+        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
+    ) -> float:
+        # this is static ton maybe later using in parallel
+        pass
+
     def compute_sliced_volume(self, param: np.ndarray) -> float:
-        ...
+        return self._compute_sliced_volume_inner(self.fslset, param, self.config)
 
     @abstractmethod
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
@@ -195,8 +202,12 @@ class HolllessActiveSampler(ActiveSamplerBase):
         new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
         self.metric = new_metric
 
-    def compute_sliced_volume(self, param: np.ndarray) -> float:
-        return self.fslset.sliced_volume_grid(param, self.axes_param, self.config.n_grid)
+    @staticmethod
+    def _compute_sliced_volume_inner(
+        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
+    ) -> float:
+        axes_param = list(range(len(param)))
+        return fslset.sliced_volume_grid(param, axes_param, config.n_grid)
 
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
         surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
@@ -212,6 +223,13 @@ class HolllessActiveSampler(ActiveSamplerBase):
 class NaiveActiveSampler(ActiveSamplerBase):
     def update_metric(self) -> None:
         pass
+
+    @staticmethod
+    def _compute_sliced_volume_inner(
+        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
+    ) -> float:
+        axes_param = list(range(len(param)))
+        return fslset.sliced_volume_mc(param, axes_param, config.n_mc_integral)
 
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         return self.fslset.sliced_volume_mc(param, self.axes_param, self.config.n_mc_integral)
