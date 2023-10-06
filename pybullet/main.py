@@ -408,6 +408,14 @@ class RobustGraspTrainer:
         logger.info(f"rollout result: {ret}")
         return ret
 
+    @classmethod
+    def load(cls, world, n_weigth_per_dim) -> "RobustGraspTrainer":
+        with open("cache.pkl", "rb") as f:
+            sampler = dill.load(f)
+        trainer = cls(world, n_weigth_per_dim)
+        trainer.sampler = sampler
+        return trainer
+
     def train(self, n_iter) -> None:
         for i in range(n_iter):
             print(f"iter: {i}")
@@ -416,7 +424,7 @@ class RobustGraspTrainer:
             with open("cache.pkl", "wb") as f:
                 dill.dump(self.sampler, f)
 
-        for i in range(50):
+        for i in range(100):
             print(f"additional iter: {i}")
             x = self.sampler.ask_additional()
             self.sampler.tell(x, self.rollout(x))
@@ -437,6 +445,8 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=300)
     parser.add_argument("--m", type=int, default=10)
     parser.add_argument("--mode", type=str, default="train")
+    parser.add_argument("--cache", action="store_true")
+
     args = parser.parse_args()
 
     n_weigth_per_dim = args.m
@@ -453,9 +463,12 @@ if __name__ == "__main__":
             assert world.check_grasp_success()
             world.reset()
             time.sleep(1000)
-        elif args.mode == "train":
+        elif args.mode in ("train", "warm"):
             create_default_logger(Path("./"), "train", logging.INFO)
-            trainer = RobustGraspTrainer(world, n_weigth_per_dim)
+            if args.mode == "warm":
+                trainer = RobustGraspTrainer.load(world, n_weigth_per_dim)
+            else:
+                trainer = RobustGraspTrainer(world, n_weigth_per_dim)
             trainer.train(args.n)
         elif args.mode == "test":
             sampler = load_sampler()
@@ -481,30 +494,51 @@ if __name__ == "__main__":
             param = sampler.best_param_so_far
 
             fig, ax = plt.subplots()
+            print(param)
             sampler.fslset.show_sliced(param, list(range(len(param))), 30, (fig, ax))
             ax.set_xlim([-0.15, 0.15])
             ax.set_ylim([-0.15, 0.15])
 
             n_grid = 8
-            error_x_lin = np.linspace(-0.1, 0.1, n_grid)
-            error_y_lin = np.linspace(-0.1, 0.1, n_grid)
+
+            error_x_lin = np.linspace(-0.06, 0.06, n_grid)
+            error_y_lin = np.linspace(-0.06, 0.06, n_grid)
+            # error_x_lin = np.linspace(-0.1, 0.1, n_grid)
+            # error_y_lin = np.linspace(-0.1, 0.1, n_grid)
             error_x, error_y = np.meshgrid(error_x_lin, error_y_lin)
             pts = np.vstack([error_x.flatten(), error_y.flatten()]).T
-            bools = []
-            world = World(gui=not args.nogui, n_weigth_per_dim=n_weigth_per_dim)
-            world.reset()
-            for error in tqdm.tqdm(pts):
-                ret = world.rollout(param, error)
-                bools.append(ret)
-            # with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
-            #     bools = list(
-            #         tqdm.tqdm(
-            #             executor.map(_process_pool_rollout, [param] * len(pts), pts),
-            #             total=len(pts),
-            #         )
-            #     )
-            bools = np.array(bools).reshape(error_x.shape).T
+
+            file_path = Path("./eval_cache.pkl")
+            if not file_path.exists() or not args.cache:
+                bools = []
+                world = World(gui=not args.nogui, n_weigth_per_dim=n_weigth_per_dim)
+                world.reset()
+                for error in tqdm.tqdm(pts):
+                    ret = world.rollout(param, error)
+                    bools.append(ret)
+                # with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
+                #     bools = list(
+                #         tqdm.tqdm(
+                #             executor.map(_process_pool_rollout, [param] * len(pts), pts),
+                #             total=len(pts),
+                #         )
+                #     )
+                bools = np.array(bools).reshape(error_x.shape)
+                with open(file_path, "wb") as f:
+                    dill.dump((pts, bools), f)
+            with open(file_path, "rb") as f:
+                pts, bools = dill.load(f)
             ax.scatter(pts[:, 0], pts[:, 1], c=bools)
+
+            plot_additional = False
+            if plot_additional:
+                X_add = sampler.X[-sampler.count_additional :, -2:]
+                Y_add = sampler.Y[-sampler.count_additional :]
+                X_add_positive = X_add[Y_add]
+                X_add_negative = X_add[np.logical_not(Y_add)]
+                ax.scatter(X_add_positive[:, 0], X_add_positive[:, 1], c="b")
+                ax.scatter(X_add_negative[:, 0], X_add_negative[:, 1], c="r")
+
             plt.show()
         else:
             assert False
