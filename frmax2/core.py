@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
@@ -19,6 +20,7 @@ class ActiveSamplerConfig:
     aabb_margin: float = 0.5
     n_mc_integral: int = 100
     c_svm: float = 1e4
+    n_process: int = 1  # if > 1, use multiprocessing
 
 
 class SamplerCache:
@@ -75,6 +77,25 @@ class ActiveSamplerBase(ABC):
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         return self._compute_sliced_volume_inner(self.fslset, param, self.config)
 
+    def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
+        if self.config.n_process == 1:
+            return np.array(
+                [
+                    self._compute_sliced_volume_inner(self.fslset, param, self.config)
+                    for param in params
+                ]
+            )
+        else:
+            n_param = len(params)
+            with ProcessPoolExecutor(self.config.n_process) as executor:
+                results = executor.map(
+                    self._compute_sliced_volume_inner,
+                    [self.fslset] * n_param,
+                    params,
+                    [self.config] * n_param,
+                )
+            return np.array(list(results))
+
     @abstractmethod
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
         ...
@@ -116,7 +137,7 @@ class ActiveSamplerBase(ABC):
         r = self.config.r_exploration
         while True:
             param_sampled = sample_until_valid(r)
-            volumes = np.array([self.compute_sliced_volume(p) for p in param_sampled])
+            volumes = self.compute_sliced_volume_batch(list(param_sampled))
             mean = np.mean(volumes)
             indices_better = np.where(volumes >= mean)[0]
             is_all_equal = len(indices_better) == self.config.n_mc_param_search
