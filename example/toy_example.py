@@ -17,7 +17,7 @@ args = parser.parse_args()
 np.random.seed(args.seed)
 
 
-env = GaussianEnvironment(1, 1)
+env = GaussianEnvironment(1, 1, with_bias=True)
 ls_param, ls_co = env.default_lengthscales()
 param_init = env.default_init_param()
 e_length = np.array([8.0])
@@ -26,17 +26,22 @@ X, Y, ls_co = initialize(lambda x: +1 if env.isInside(x) else -1, param_init, e_
 ls_co = np.array([0.3])
 metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 
-config = ActiveSamplerConfig()
 if args.method == "hollless":
+    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30)
     sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
 else:
+    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30)
     sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
 
-sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
 for i in range(args.n):
     print(i)
     x = sampler.ask()
-    sampler.tell(x, env.isInside(x), update_clf=False)
+    sampler.tell(x, env.isInside(x))
+
+# for i in range(30):
+#     print(i)
+#     x = sampler.ask_additional()
+#     sampler.tell(x, env.isInside(x))
 
 # plot
 fig, ax = plt.subplots()
@@ -48,7 +53,7 @@ ax.scatter(X_positive[:, 0], X_positive[:, 1], c="b")
 ax.scatter(X_negative[:, 0], X_negative[:, 1], c="r")
 
 xlin = np.linspace(-2.5, 1.5, 100)
-ylin = np.linspace(-1.5, 1.5, 100)
+ylin = np.linspace(-1.5, 3.5, 100)
 Xgrid, Ygrid = np.meshgrid(xlin, ylin)
 pts = np.vstack([Xgrid.ravel(), Ygrid.ravel()]).T
 values = sampler.fslset.func(pts)
@@ -58,5 +63,8 @@ ax.set_aspect("equal")
 
 # min max ax
 ax.set_xlim(-2.5, 1.5)
-ax.set_ylim(-1.5, 1.5)
+if env.with_bias:
+    ax.set_ylim(-1.5, 3.0)
+else:
+    ax.set_ylim(-1.5, 1.5)
 plt.show()

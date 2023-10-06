@@ -3,6 +3,7 @@ from abc import ABC
 from typing import Tuple
 
 import numpy as np
+from matplotlib.patches import Circle
 
 
 def npdf(dist_from_center: float) -> float:
@@ -10,10 +11,15 @@ def npdf(dist_from_center: float) -> float:
 
 
 class GaussianEnvironment(ABC):
-    def __init__(self, n_dim: int, m_dim: int):
+    def __init__(self, n_dim: int, m_dim: int, with_bias: bool = False):
         self.n_dim = n_dim
         self.m_dim = m_dim
         self.name = "gaussian"
+        self.with_bias = with_bias
+        if with_bias:
+            self.bias_param = 0.8
+        else:
+            self.bias_param = 0.0
 
     def _npdf(self, param):
         dists = np.sqrt(np.sum(param**2))
@@ -32,7 +38,13 @@ class GaussianEnvironment(ABC):
 
     def isInside(self, x: np.ndarray) -> bool:
         assert x.ndim == 1, "must be 1"
-        return np.linalg.norm(x[-self.m_dim :]) < self._npdf(x[0 : self.n_dim])
+        if self.with_bias:
+            e, theta = x[-self.m_dim :], x[0 : self.n_dim]
+            f_value = self._npdf(theta)
+            bias = self.bias_param * f_value
+            return np.linalg.norm(e - bias) < f_value
+        else:
+            return np.linalg.norm(x[-self.m_dim :]) < self._npdf(x[0 : self.n_dim])
 
     def default_init_param(self) -> np.ndarray:
         return np.array([-2.0] + [0 for i in range(self.n_dim - 1)])
@@ -44,7 +56,19 @@ class GaussianEnvironment(ABC):
 
     def visualize_region(self, param_min, param_max, fax) -> None:
         param_lin = np.linspace(param_min, param_max, 200)
-        upper = np.exp(-0.5 * param_lin**2)
-        lower = -upper
+        if self.with_bias:
+            f_value = np.exp(-0.5 * param_lin**2)
+            bias = self.bias_param * f_value
+            upper = f_value + bias
+            lower = -f_value + bias
+        else:
+            upper = np.exp(-0.5 * param_lin**2)
+            lower = -upper
         fig, ax = fax
         ax.fill_between(param_lin, lower, upper, color="black", alpha=0.15, edgecolor="white")
+
+    def visualize_optimal_sliced_region(self, fax) -> None:
+        fig, ax = fax
+        assert self.m_dim == 2
+        circle = Circle((self.bias_param, self.bias_param), 1.0, fill=False, color="red")
+        ax.add_patch(circle)
