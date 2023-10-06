@@ -340,9 +340,9 @@ class World:
         self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
         self.cup.sync()
         pos_post_lift = self.cup.obj.worldpos()
-        success = np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03
-        # if success:
-        #     assert self.ri.is_in_collision(self.cup.id_value)
+        success = np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03 and self.ri.is_in_collision(
+            self.cup.id_value
+        )
         return success
 
 

@@ -67,6 +67,10 @@ class PybulletPR2:
         self.link_id_to_name_table = link_id_to_name_table
         self.max_angle_diff_list = max_angle_diff_list
 
+    def is_in_collision(self, object_id: int) -> bool:
+        ret = pybullet.getContactPoints(bodyA=self.robot_id, bodyB=object_id)
+        return len(ret) > 0
+
     @cached_property
     def pb_joint_ids(self) -> List[int]:
         pb_joint_ids = []
@@ -83,15 +87,22 @@ class PybulletPR2:
         pb_current_angle = np.array(pb_current_angle)
         return pb_current_angle
 
-    def _set_q(self, q: np.ndarray) -> None:
+    def _set_q(self, q: np.ndarray, simulate_lower: bool = True) -> None:
         for pb_joint_id, angle in zip(self.pb_joint_ids, q):
             pybullet.resetJointState(self.robot_id, pb_joint_id, angle)
 
-        pybullet.stepSimulation()
-        while not self.is_environment_static():
+        if simulate_lower:
             pybullet.stepSimulation()
+            while not self.is_environment_static():
+                pybullet.stepSimulation()
 
-    def set_q(self, q_target: np.ndarray, simulate: bool = True, t_sleep: float = 0.0) -> None:
+    def set_q(
+        self,
+        q_target: np.ndarray,
+        simulate: bool = True,
+        simulate_lower: bool = True,
+        t_sleep: float = 0.0,
+    ) -> None:
         if simulate:
             q_current = self.get_q()
             diff = q_target - q_current
@@ -111,10 +122,10 @@ class PybulletPR2:
             waypoints = [q_current + diff * phase for phase in phase_list]
             np.testing.assert_almost_equal(waypoints[-1], q_target)
             for av in waypoints[1:]:
-                self._set_q(av)
+                self._set_q(av, simulate_lower=simulate_lower)
                 time.sleep(t_sleep)
         else:
-            self._set_q(q_target)
+            self._set_q(q_target, simulate_lower=simulate_lower)
 
     def is_environment_static(self):
         bodies = pybullet.getNumBodies()

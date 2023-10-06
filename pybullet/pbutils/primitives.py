@@ -16,13 +16,19 @@ class PybulletPrimitiveMixIn:
     id_value: int
     obj: Link
 
-    def set_coords(self, co: Coordinates):
+    def set_coords(self, co: Coordinates) -> None:
         pybullet.resetBasePositionAndOrientation(
             self.id_value, co.worldpos(), wxyz2xyzw(co.quaternion)
         )
         self.obj.newcoords(co)
 
-    def sync(self):
+    def pause(self) -> None:
+        pybullet.resetBaseVelocity(
+            self.id_value, linearVelocity=[0, 0, 0], angularVelocity=[0, 0, 0]
+        )
+        pybullet.stepSimulation()
+
+    def sync(self) -> None:
         pos, rot = pybullet.getBasePositionAndOrientation(self.id_value)
         co = Coordinates(pos=pos, rot=xyzw2wxyz(rot))
         self.obj.newcoords(co)
