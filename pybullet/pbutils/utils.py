@@ -8,15 +8,21 @@ from skmp.satisfy import satisfy_by_optimization, satisfy_by_optimization_with_b
 from skrobot.coordinates import Coordinates
 from skrobot.models.pr2 import PR2
 
-from .dummy_pr2 import DummyPR2
+from .dummy_pr2 import DummyPR2, GripperOnly
 
 logger = logging.getLogger(__name__)
 
 
 def solve_ik(pr2: PR2, co: Coordinates) -> bool:
+    if isinstance(pr2, GripperOnly):
+        co = co.copy_worldcoords()
+        co.translate([-0.08, 0.0, 0.0])
+        pr2.newcoords(co)
+        return True  # always solvable
+
     if isinstance(pr2, DummyPR2):
         link_list = None
-    else:
+    elif isinstance(pr2, DummyPR2):
         link_list = pr2.rarm.link_list
     ret = pr2.inverse_kinematics(
         co,

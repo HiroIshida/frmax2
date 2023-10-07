@@ -49,10 +49,8 @@ class PybulletPR2Base(ABC):
         self.joint_id_to_name_table = joint_id_to_name_table
         self.link_name_to_id_table = link_name_to_id_table
         self.link_id_to_name_table = link_id_to_name_table
-        self.max_angle_diff_list = self.compute_max_angle_diff_list()  # must call at last
-        if with_base:
-            self.max_angle_diff_list += [np.min(self.max_angle_diff_list)] * 6
         self.with_base = with_base
+        self.max_angle_diff_list = self.compute_max_angle_diff_list()  # must call at last
 
     @abstractmethod
     def compute_max_angle_diff_list(self) -> List[float]:
@@ -173,6 +171,9 @@ class PybulletPR2(PybulletPR2Base):
         for joint_name in close_joint_names:
             max_angle_diff_table[joint_name] = 0.02
         max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in self.pr2.joint_list]
+
+        if self.with_base:
+            max_angle_diff_list += [np.min(max_angle_diff_list)] * 6
         return max_angle_diff_list
 
 
@@ -183,4 +184,18 @@ class PybulletDummyPR2(PybulletPR2Base):
             if "gripper" in joint_name:
                 max_angle_diff_table[joint_name] = 0.02
         max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in self.pr2.joint_list]
+        if self.with_base:
+            max_angle_diff_list += [np.min(max_angle_diff_list)] * 6
+        return max_angle_diff_list
+
+
+class PybulletGripperOnly(PybulletPR2Base):
+    def compute_max_angle_diff_list(self) -> List[float]:
+        max_angle_diff_table = {name: 0.001 for name in self.joint_name_to_id_table.keys()}
+        for joint_name, value in max_angle_diff_table.items():
+            if "gripper" in joint_name:
+                max_angle_diff_table[joint_name] = 0.02
+        max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in self.pr2.joint_list]
+        if self.with_base:
+            max_angle_diff_list += [0.001] * 6
         return max_angle_diff_list

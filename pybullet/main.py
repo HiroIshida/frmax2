@@ -16,9 +16,9 @@ import tqdm
 from frmax.initialize import initialize
 from movement_primitives.dmp import DMP as _DMP
 from movement_primitives.dmp import CartesianDMP as _CartesianDMP
-from pbutils.dummy_pr2 import DummyPR2
+from pbutils.dummy_pr2 import DummyPR2, GripperOnly
 from pbutils.primitives import PybulletBox, PybulletMesh
-from pbutils.robot_interface import PybulletDummyPR2, PybulletPR2
+from pbutils.robot_interface import PybulletDummyPR2, PybulletPR2, PybulletGripperOnly
 from pbutils.utils import solve_ik, solve_ik_optimization
 from skrobot.coordinates import Coordinates
 from skrobot.coordinates.math import normalize_vector
@@ -110,6 +110,7 @@ class World:
         pybullet.setGravity(0.0, 0.0, -9.8)
         pybullet.setTimeStep(0.001)
         pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())  # used by loadURDF
+        pybullet.setPhysicsEngineParameter(numSolverIterations=300)
 
         # with suppress_stdout():
         if True:
@@ -125,6 +126,8 @@ class World:
             # ri = PybulletPR2(pr2)
             pr2 = DummyPR2()
             ri = PybulletDummyPR2(pr2)
+            # pr2 = GripperOnly()
+            # ri = PybulletGripperOnly(pr2, with_base=True)
 
         pr2.reset_manip_pose()
         pr2.gripper_distance(0.05)
@@ -138,12 +141,12 @@ class World:
         self.n_weigth_per_dim = n_weigth_per_dim
 
         # this come after setting the initial pose of the cup
-        if isinstance(pr2, DummyPR2):
-            assert solve_ik(pr2, self.co_grasp_pre())
-        else:
+        if isinstance(pr2, PR2):
             assert solve_ik_optimization(
                 pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True
             )
+        else:
+            assert solve_ik(pr2, self.co_grasp_pre())
         ri.set_skrobot_state(pr2, t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
@@ -155,12 +158,12 @@ class World:
         co_grasp_pre = self.co_grasp_pre(co_handle_recog)
         logger.info(f"attempted with co_grasp_pre: {co_grasp_pre}")
 
-        if isinstance(self.pr2, DummyPR2):
-            ik_success = solve_ik(self.pr2, self.co_grasp_pre())
-        else:
+        if isinstance(self.pr2, PR2):
             ik_success = solve_ik_optimization(
                 self.pr2, self.co_grasp_pre(), sdf=self.box.sdf, random_sampling=True
             )
+        else:
+            ik_success = solve_ik(self.pr2, self.co_grasp_pre())
 
         if not ik_success:
             logger.error("ik failed in initialize_pr2_configuration_with_recog_error")
@@ -346,7 +349,7 @@ class World:
         for co_rarm2world in traj:
             if not solve_ik(self.pr2, co_rarm2world):
                 logger.error("ik failed in reproduce_grasping_dmp")
-            self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=True)
+            self.ri.set_skrobot_state(self.pr2, t_sleep=0.05, simulate=True)
 
         # finally grasp
         self.pr2.gripper_distance(0.025)
