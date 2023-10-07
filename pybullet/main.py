@@ -16,8 +16,9 @@ import tqdm
 from frmax.initialize import initialize
 from movement_primitives.dmp import DMP as _DMP
 from movement_primitives.dmp import CartesianDMP as _CartesianDMP
+from pbutils.dummy_pr2 import DummyPR2
 from pbutils.primitives import PybulletBox, PybulletMesh
-from pbutils.robot_interface import PybulletPR2
+from pbutils.robot_interface import PybulletDummyPR2, PybulletPR2
 from pbutils.utils import solve_ik, solve_ik_optimization
 from skrobot.coordinates import Coordinates
 from skrobot.coordinates.math import normalize_vector
@@ -110,8 +111,8 @@ class World:
         pybullet.setTimeStep(0.001)
         pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())  # used by loadURDF
 
-        with suppress_stdout():
-            # if True:
+        # with suppress_stdout():
+        if True:
             # loading urdf often prints out annoying warnings
             pybullet.loadURDF("plane.urdf")
             box = PybulletBox(np.array([0.6, 0.8, 0.8]), np.array([0.8, 0.0, 0.4]))
@@ -120,8 +121,10 @@ class World:
                 scale=0.03,
                 pos=np.array([0.6, 0.0, 0.8]),
             )
-            pr2 = PR2()
-            ri = PybulletPR2(pr2)
+            # pr2 = PR2()
+            # ri = PybulletPR2(pr2)
+            pr2 = DummyPR2()
+            ri = PybulletDummyPR2(pr2)
 
         pr2.reset_manip_pose()
         pr2.gripper_distance(0.05)
@@ -135,7 +138,12 @@ class World:
         self.n_weigth_per_dim = n_weigth_per_dim
 
         # this come after setting the initial pose of the cup
-        assert solve_ik_optimization(pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True)
+        if isinstance(pr2, DummyPR2):
+            assert solve_ik(pr2, self.co_grasp_pre())
+        else:
+            assert solve_ik_optimization(
+                pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True
+            )
         ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
@@ -146,9 +154,15 @@ class World:
         co_handle_recog.translate(recog_error, wrt="world")
         co_grasp_pre = self.co_grasp_pre(co_handle_recog)
         logger.info(f"attempted with co_grasp_pre: {co_grasp_pre}")
-        if not solve_ik_optimization(
-            self.pr2, co_grasp_pre, sdf=self.box.sdf, random_sampling=True
-        ):
+
+        if isinstance(self.pr2, DummyPR2):
+            ik_success = solve_ik(self.pr2, self.co_grasp_pre())
+        else:
+            ik_success = solve_ik_optimization(
+                self.pr2, self.co_grasp_pre(), sdf=self.box.sdf, random_sampling=True
+            )
+
+        if not ik_success:
             logger.error("ik failed in initialize_pr2_configuration_with_recog_error")
             assert False
         self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=False, simulate_lower=False)
@@ -335,7 +349,7 @@ class World:
             self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
         # finally grasp
-        self.pr2.gripper_distance(0.01)
+        self.pr2.gripper_distance(0.025)
         self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
 
     def check_grasp_success(self) -> bool:
@@ -400,7 +414,7 @@ class RobustGraspTrainer:
         )
 
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
-        config = ActiveSamplerConfig()
+        config = ActiveSamplerConfig(integration_method="mc", learning_rate=0.5)
 
         def is_valid_param(param):
             goal_param = param[-3:]

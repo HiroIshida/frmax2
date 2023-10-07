@@ -1,4 +1,5 @@
 import time
+from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Dict, List
 
@@ -9,7 +10,7 @@ from skrobot.models.pr2 import PR2
 import pybullet
 
 
-class PybulletPR2:
+class PybulletPR2Base(ABC):
     pr2: PR2
     robot_id: int
     joint_name_to_id_table: Dict[str, int]
@@ -41,31 +42,15 @@ class PybulletPR2:
         joint_id_to_name_table = {v: k for k, v in joint_name_to_id_table.items()}
         link_id_to_name_table = {v: k for k, v in link_name_to_id_table.items()}
 
-        max_angle_diff_table = {name: 0.005 for name in joint_name_to_id_table.keys()}
-
-        # joint close to end effector should have larger max_angle_diff
-        # first get child joints from r_forarm_link
-        close_joint_names = []
-
-        def recursion(link: Link):
-            clinks = link.child_links
-            if len(clinks) == 0:
-                return
-            for clink in clinks:
-                close_joint_names.append(clink.joint.name)
-                recursion(clink)
-
-        recursion(pr2.r_forearm_link)
-        recursion(pr2.l_forearm_link)
-        for joint_name in close_joint_names:
-            max_angle_diff_table[joint_name] = 0.02
-        max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in pr2.joint_list]
-
         self.joint_name_to_id_table = joint_name_to_id_table
         self.joint_id_to_name_table = joint_id_to_name_table
         self.link_name_to_id_table = link_name_to_id_table
         self.link_id_to_name_table = link_id_to_name_table
-        self.max_angle_diff_list = max_angle_diff_list
+        self.max_angle_diff_list = self.compute_max_angle_diff_list()  # must call at last
+
+    @abstractmethod
+    def compute_max_angle_diff_list(self) -> List[float]:
+        ...
 
     def is_in_collision(self, object_id: int) -> bool:
         ret = pybullet.getContactPoints(bodyA=self.robot_id, bodyB=object_id)
@@ -136,3 +121,37 @@ class PybulletPR2:
             if np.linalg.norm(lin_vel) > 0.05 or np.linalg.norm(ang_vel) > 0.05:
                 return False
         return True
+
+
+class PybulletPR2(PybulletPR2Base):
+    def compute_max_angle_diff_list(self) -> List[float]:
+        max_angle_diff_table = {name: 0.005 for name in self.joint_name_to_id_table.keys()}
+
+        # joint close to end effector should have larger max_angle_diff
+        # first get child joints from r_forarm_link
+        close_joint_names = []
+
+        def recursion(link: Link):
+            clinks = link.child_links
+            if len(clinks) == 0:
+                return
+            for clink in clinks:
+                close_joint_names.append(clink.joint.name)
+                recursion(clink)
+
+        recursion(self.pr2.r_forearm_link)
+        recursion(self.pr2.l_forearm_link)
+        for joint_name in close_joint_names:
+            max_angle_diff_table[joint_name] = 0.02
+        max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in self.pr2.joint_list]
+        return max_angle_diff_list
+
+
+class PybulletDummyPR2(PybulletPR2Base):
+    def compute_max_angle_diff_list(self) -> List[float]:
+        max_angle_diff_table = {name: 0.001 for name in self.joint_name_to_id_table.keys()}
+        for joint_name, value in max_angle_diff_table.items():
+            if "gripper" in joint_name:
+                max_angle_diff_table[joint_name] = 0.02
+        max_angle_diff_list = [max_angle_diff_table[joint.name] for joint in self.pr2.joint_list]
+        return max_angle_diff_list
