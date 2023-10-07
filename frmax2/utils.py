@@ -4,6 +4,8 @@ from logging import Logger
 from pathlib import Path
 from typing import List, Optional
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,3 +47,21 @@ def create_default_logger(
             log_sym_path.unlink()
         log_sym_path.symlink_to(log_file_path)
     return logger
+
+
+def box_sdf(pts: np.ndarray, b_min: np.ndarray, b_max: np.ndarray) -> np.ndarray:
+    origin = (b_min + b_max) * 0.5
+    half_extent = (b_max - b_min) * 0.5
+    n_pts, _ = pts.shape
+
+    pts_from_center = pts - origin[None, :]
+    sd_vals_each_axis = np.abs(pts_from_center) - half_extent[None, :]
+
+    positive_dists_each_axis = np.maximum(sd_vals_each_axis, 0.0)
+    positive_dists = np.sqrt(np.sum(positive_dists_each_axis**2, axis=1))
+
+    negative_dists_each_axis = np.max(sd_vals_each_axis, axis=1)
+    negative_dists = np.minimum(negative_dists_each_axis, 0.0)
+
+    sd_vals = positive_dists + negative_dists
+    return sd_vals

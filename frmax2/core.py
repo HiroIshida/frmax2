@@ -163,16 +163,20 @@ class ActiveSamplerBase(ABC):
             co_points = self.sample_sliced_points(param)
             for co_point in co_points:
                 x = np.hstack([param, co_point])
+                assert len(x) == self.dim
                 uncertainty = np.min(self.metric(x, self.X))
                 if uncertainty > uncertainty_max:
                     uncertainty_max = uncertainty
                     x_best = x
         assert x_best is not None
+        assert len(x_best) == self.dim
         return x_best
 
     def ask_additional(self) -> np.ndarray:
         param_here = self.best_param_so_far
         sliced_points = self.sample_sliced_points(param_here)
+        assert len(sliced_points) > 0
+        logger.debug(f"slice points: {sliced_points}")
         if self.count_additional == 0:
             e_new = sliced_points[0]  # because we cannot compare
         else:
@@ -186,6 +190,7 @@ class ActiveSamplerBase(ABC):
                 if uncertainty > uncertainty_max:
                     uncertainty_max = uncertainty
                     e_new = e
+            assert e_new is not None and len(e_new) == e_dim
         self.count_additional += 1
         return np.hstack([param_here, e_new])
 

@@ -7,7 +7,7 @@ from skimage import measure
 from sklearn.svm import SVC
 
 from frmax2.metric import MetricBase
-from frmax2.utils import get_co_axes
+from frmax2.utils import box_sdf, get_co_axes
 
 
 def rescale(pts, b_min, b_max, n):
@@ -224,6 +224,11 @@ class SuperlevelSet:
         axes_co = get_co_axes(self.dim, axes_slice)
         b_min_co = self.b_min[axes_co]
         b_max_co = self.b_max[axes_co]
+
+        # workaround for the case where the surface is not closed
+        # value outside of the box should be smaller than 0
+        sd_vals = -box_sdf(grid_points[:, axes_co], b_min_co, b_max_co)
+        values = np.minimum(values, sd_vals)
 
         if dim_co == 1:
             return self._get_surface_by_slicing_1d(values, b_min_co, b_max_co, n_grid)
