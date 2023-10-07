@@ -48,7 +48,7 @@ class DMP(_DMP):
         n_dim = 3
         n_goal_dim = 3
         dof = self.n_weights_per_dim * n_dim + n_goal_dim
-        assert len(param) == dof
+        assert len(param) == dof, f"{len(param)} != {dof}"
         W = param[:-n_goal_dim].reshape(n_dim, self.n_weights_per_dim)
         self.forcing_term.weights[:2, :] += W[:2, :]
         self.forcing_term.weights[3, :] += W[2, :]
@@ -481,7 +481,7 @@ if __name__ == "__main__":
 
         if args.mode == "debug":
             dmp = world.get_relative_grasping_dmp()
-            dmp.set_param(np.zeros(n_weigth_per_dim * 3 + 2))
+            dmp.set_param(np.zeros(n_weigth_per_dim * 3 + 3))
             world.reproduce_grasping_dmp(dmp, np.array([0.0, 0.0, -0.0]))
             assert world.check_grasp_success()
             world.reset()
