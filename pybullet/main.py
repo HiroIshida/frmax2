@@ -128,7 +128,7 @@ class World:
 
         pr2.reset_manip_pose()
         pr2.gripper_distance(0.05)
-        ri.set_q(pr2.angle_vector(), t_sleep=0.01, simulate=False, simulate_lower=False)
+        ri.set_skrobot_state(pr2, t_sleep=0.01, simulate=False, simulate_lower=False)
 
         self.mesh_pose_init = cup.obj.copy_worldcoords()
         self.ri = ri
@@ -144,7 +144,7 @@ class World:
             assert solve_ik_optimization(
                 pr2, self.co_grasp_pre(), sdf=box.sdf, random_sampling=True
             )
-        ri.set_q(pr2.angle_vector(), t_sleep=0.0, simulate=False)
+        ri.set_skrobot_state(pr2, t_sleep=0.0, simulate=False)
         self.av_init = pr2.angle_vector()
 
     def initialize_pr2_configuration_with_recog_error(self, recog_error: np.ndarray) -> None:
@@ -165,7 +165,7 @@ class World:
         if not ik_success:
             logger.error("ik failed in initialize_pr2_configuration_with_recog_error")
             assert False
-        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=False, simulate_lower=False)
+        self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=False, simulate_lower=False)
 
     def rollout(self, param: np.ndarray, recog_error: np.ndarray) -> bool:
         is_pos_only = len(recog_error) == 2
@@ -225,7 +225,7 @@ class World:
 
     def reset(self) -> None:
         self.pr2.angle_vector(self.av_init)
-        self.ri.set_q(self.av_init, t_sleep=0.0, simulate=False)
+        self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=False)
         self.cup.set_coords(self.mesh_pose_init)
         self.cup.pause()
 
@@ -346,11 +346,11 @@ class World:
         for co_rarm2world in traj:
             if not solve_ik(self.pr2, co_rarm2world):
                 logger.error("ik failed in reproduce_grasping_dmp")
-            self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+            self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=True)
 
         # finally grasp
         self.pr2.gripper_distance(0.025)
-        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+        self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=True)
 
     def check_grasp_success(self) -> bool:
         co_rarm_wrt_world = self.pr2.rarm_end_coords.copy_worldcoords()
@@ -361,7 +361,7 @@ class World:
         self.cup.sync()
         pos_pre_lift = self.cup.obj.worldpos()
 
-        self.ri.set_q(self.pr2.angle_vector(), t_sleep=0.0, simulate=True)
+        self.ri.set_skrobot_state(self.pr2, t_sleep=0.0, simulate=True)
         self.cup.sync()
         pos_post_lift = self.cup.obj.worldpos()
         success = np.linalg.norm(pos_pre_lift - pos_post_lift) > 0.03 and self.ri.is_in_collision(

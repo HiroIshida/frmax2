@@ -4,8 +4,10 @@ from functools import cached_property
 from typing import Dict, List
 
 import numpy as np
+from skmp.robot.utils import get_robot_state
 from skrobot.model.link import Link
 from skrobot.models.pr2 import PR2
+from tinyfk import BaseType
 
 import pybullet
 
@@ -18,10 +20,11 @@ class PybulletPR2Base(ABC):
     link_name_to_id_table: Dict[str, int]
     link_id_to_name_table: Dict[int, str]
     max_angle_diff_list: List[float]  # same order as joint_lst
+    with_base: bool
 
-    def __init__(self, pr2: PR2):
+    def __init__(self, pr2: PR2, with_base: bool = False):
         self.pr2 = pr2
-        robot_id = pybullet.loadURDF(pr2.default_urdf_path, useFixedBase=True)
+        robot_id = pybullet.loadURDF(pr2.default_urdf_path, useFixedBase=not with_base)
         self.robot_id = robot_id
 
         link_name_to_id_table = {pybullet.getBodyInfo(robot_id)[0].decode("UTF-8"): -1}
@@ -47,6 +50,9 @@ class PybulletPR2Base(ABC):
         self.link_name_to_id_table = link_name_to_id_table
         self.link_id_to_name_table = link_id_to_name_table
         self.max_angle_diff_list = self.compute_max_angle_diff_list()  # must call at last
+        if with_base:
+            self.max_angle_diff_list += [np.min(self.max_angle_diff_list)] * 6
+        self.with_base = with_base
 
     @abstractmethod
     def compute_max_angle_diff_list(self) -> List[float]:
@@ -70,9 +76,20 @@ class PybulletPR2Base(ABC):
             pb_angle = pybullet.getJointState(self.robot_id, pb_joint_id)[0]
             pb_current_angle.append(pb_angle)
         pb_current_angle = np.array(pb_current_angle)
+
+        if self.with_base:
+            base_pos, base_quat = pybullet.getBasePositionAndOrientation(self.robot_id)
+            base_rpy = pybullet.getEulerFromQuaternion(base_quat)
+            pb_current_angle = np.hstack([pb_current_angle, base_pos, base_rpy])
+
         return pb_current_angle
 
     def _set_q(self, q: np.ndarray, simulate_lower: bool = True) -> None:
+        if self.with_base:
+            q, base_pos, base_rpy = q[:-6], q[-6:-3], q[-3:]
+            base_quat = pybullet.getQuaternionFromEuler(base_rpy)
+            pybullet.resetBasePositionAndOrientation(self.robot_id, base_pos, base_quat)
+
         for pb_joint_id, angle in zip(self.pb_joint_ids, q):
             pybullet.resetJointState(self.robot_id, pb_joint_id, angle)
 
@@ -80,6 +97,18 @@ class PybulletPR2Base(ABC):
             pybullet.stepSimulation()
             while not self.is_environment_static():
                 pybullet.stepSimulation()
+
+    def set_skrobot_state(
+        self,
+        robot_model: PR2,
+        simulate: bool = True,
+        simulate_lower: bool = True,
+        t_sleep: float = 0.0,
+    ) -> None:
+        assert robot_model is self.pr2
+        base_type = BaseType.FLOATING if self.with_base else BaseType.FIXED
+        q = get_robot_state(robot_model, robot_model.joint_names, base_type=base_type)
+        self.set_q(q, simulate=simulate, simulate_lower=simulate_lower, t_sleep=t_sleep)
 
     def set_q(
         self,
