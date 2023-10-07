@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Literal, Optional, Tuple
 
 import numpy as np
 
@@ -21,7 +21,9 @@ class ActiveSamplerConfig:
     n_mc_integral: int = 100
     c_svm: float = 1e4
     n_process: int = 1  # if > 1, use multiprocessing
-    integration_method: str = "mc"
+    integration_method: Literal["mc", "grid"] = "grid"
+    measure_width_method: Literal["mc", "grid"] = "grid"
+    sample_error_method: Literal["mc-margin", "mc-inside", "grid"] = "grid"
 
 
 class SamplerCache:
@@ -101,16 +103,47 @@ class ActiveSamplerBase(ABC):
                 )
             return np.array(list(results))
 
-    @abstractmethod
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
-        ...
+        axes_co = get_co_axes(self.dim, self.axes_param)
+        if self.config.sample_error_method == "mc-margin":
+            points = self.fslset.sample_mc_points_sliced(
+                param, self.axes_param, self.config.n_mc_integral
+            )
+            points_inside = points[np.abs(self.fslset.func(points)) < 1.0]
+            return points_inside[:, axes_co]
+        elif self.config.sample_error_method == "mc-inside":
+            points = self.fslset.sample_mc_points_sliced(
+                param, self.axes_param, self.config.n_mc_integral
+            )
+            points_inside = points[self.fslset.func(points) > -0.0]
+            return points_inside[:, axes_co]
+        elif self.config.sample_error_method == "grid":
+            surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
+            if surface is None:
+                return np.zeros((0, self.metric.metirics[0].dim))
+            else:
+                return surface.points
+        else:
+            assert False
 
-    @abstractmethod
     def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
-        ...
+        if self.config.measure_width_method == "mc":
+            return self.fslset.measure_region_widths_mc(
+                param, self.axes_param, self.config.n_mc_integral
+            )
+        elif self.config.measure_width_method == "grid":
+            return self.fslset.measure_region_widths_grid(
+                param, self.axes_param, self.config.n_grid
+            )
+        else:
+            assert False
 
     @abstractmethod
     def update_metric(self) -> None:
+        ...
+
+    @abstractmethod
+    def check_config_compat(self) -> bool:
         ...
 
     @property
@@ -233,33 +266,13 @@ class HolllessActiveSampler(ActiveSamplerBase):
         new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
         self.metric = new_metric
 
-    def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
-        surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
-        if surface is None:
-            return np.zeros((0, self.metric.metirics[0].dim))
-        else:
-            return surface.points
-
-    def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
-        return self.fslset.measure_region_widths_grid(param, self.axes_param, self.config.n_grid)
+    def check_config_compat(self) -> bool:
+        return self.config.sample_error_method != "mc-inside"
 
 
 class NaiveActiveSampler(ActiveSamplerBase):
     def update_metric(self) -> None:
         pass
 
-    def compute_sliced_volume(self, param: np.ndarray) -> float:
-        return self.fslset.sliced_volume_mc(param, self.axes_param, self.config.n_mc_integral)
-
-    def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
-        points = self.fslset.sample_mc_points_sliced(
-            param, self.axes_param, self.config.n_mc_integral
-        )
-        points_inside = points[self.fslset.func(points) > -0.0]
-        axes_co = get_co_axes(self.dim, self.axes_param)
-        return points_inside[:, axes_co]
-
-    def compute_sliced_widths(self, param: np.ndarray) -> np.ndarray:
-        return self.fslset.measure_region_widths_mc(
-            param, self.axes_param, self.config.n_mc_integral
-        )
+    def check_config_compat(self) -> bool:
+        return self.config.sample_error_method == "mc-inside"
