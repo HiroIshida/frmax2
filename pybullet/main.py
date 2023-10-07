@@ -157,7 +157,17 @@ class World:
         is_pos_only = len(recog_error) == 2
         self.reset()
         self.initialize_pr2_configuration_with_recog_error(recog_error)
-        pybullet.stepSimulation()  # this is needed to update the collision state
+
+        co_cup_pre = self.cup.obj.copy_worldcoords()
+        for _ in range(10):
+            pybullet.stepSimulation()  # this is needed to update the collision state
+        self.cup.sync()
+        co_cup_post = self.cup.obj.copy_worldcoords()
+        cup_moved = np.linalg.norm(co_cup_pre.worldpos() - co_cup_post.worldpos()) > 0.01
+        if cup_moved:
+            logger.info("cup moved (meaning, in collision). return False")
+            return False
+
         if self.ri.is_in_collision(self.cup.id_value):
             logger.info("in collision. return False")
             return False
@@ -377,7 +387,7 @@ class RobustGraspTrainer:
         self.param_dim = dmp_param_dim + goal_param_dim
 
         # ls_param = np.hstack([100 * np.ones(dmp_param_dim), [0.01, 0.01, 0.1]])
-        ls_param = np.hstack([100 * np.ones(dmp_param_dim), [0.06, 0.06, 0.6]])
+        ls_param = np.hstack([50 * np.ones(dmp_param_dim), [0.06, 0.06, 0.4]])
         ls_error = 0.3 * np.ones(2)
         param_init = np.zeros(self.param_dim)
 
@@ -391,11 +401,24 @@ class RobustGraspTrainer:
 
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
         config = ActiveSamplerConfig()
+
+        def is_valid_param(param):
+            goal_param = param[-3:]
+            goal_x, goal_y, goal_yaw = goal_param
+            if abs(goal_x) > 0.06:
+                return False
+            if abs(goal_y) > 0.06:
+                return False
+            if abs(goal_yaw) > 0.4:
+                return False
+            return True
+
         sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
         self.config = config
         self.sampler = sampler
 
     def rollout(self, x: np.ndarray) -> bool:
+        assert len(x) == self.param_dim + 2, f"{len(x)} != {self.param_dim + 2}"
         param = x[: self.param_dim]
         error = x[self.param_dim :]
 
@@ -443,7 +466,7 @@ if __name__ == "__main__":
     parser.add_argument("--nogui", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n", type=int, default=300)
-    parser.add_argument("--m", type=int, default=10)
+    parser.add_argument("--m", type=int, default=6)
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--cache", action="store_true")
 
@@ -464,7 +487,7 @@ if __name__ == "__main__":
             world.reset()
             time.sleep(1000)
         elif args.mode in ("train", "warm"):
-            create_default_logger(Path("./"), "train", logging.INFO)
+            create_default_logger(Path("./"), "train", logging.DEBUG)
             if args.mode == "warm":
                 trainer = RobustGraspTrainer.load(world, n_weigth_per_dim)
             else:
@@ -501,10 +524,10 @@ if __name__ == "__main__":
 
             n_grid = 8
 
-            error_x_lin = np.linspace(-0.06, 0.06, n_grid)
-            error_y_lin = np.linspace(-0.06, 0.06, n_grid)
-            # error_x_lin = np.linspace(-0.1, 0.1, n_grid)
-            # error_y_lin = np.linspace(-0.1, 0.1, n_grid)
+            # error_x_lin = np.linspace(-0.06, 0.06, n_grid)
+            # error_y_lin = np.linspace(-0.06, 0.06, n_grid)
+            error_x_lin = np.linspace(-0.1, 0.1, n_grid)
+            error_y_lin = np.linspace(-0.1, 0.1, n_grid)
             error_x, error_y = np.meshgrid(error_x_lin, error_y_lin)
             pts = np.vstack([error_x.flatten(), error_y.flatten()]).T
 
@@ -514,8 +537,11 @@ if __name__ == "__main__":
                 world = World(gui=not args.nogui, n_weigth_per_dim=n_weigth_per_dim)
                 world.reset()
                 for error in tqdm.tqdm(pts):
-                    ret = world.rollout(param, error)
-                    bools.append(ret)
+                    if np.linalg.norm(error) > 0.1:  # adhoc
+                        bools.append(False)
+                    else:
+                        ret = world.rollout(param, error)
+                        bools.append(ret)
                 # with ProcessPoolExecutor(max_workers=8, initializer=_process_pool_setup) as executor:
                 #     bools = list(
                 #         tqdm.tqdm(
