@@ -21,6 +21,7 @@ class ActiveSamplerConfig:
     n_mc_integral: int = 100
     c_svm: float = 1e4
     n_process: int = 1  # if > 1, use multiprocessing
+    integration_method: str = "mc"
 
 
 class SamplerCache:
@@ -67,12 +68,16 @@ class ActiveSamplerBase(ABC):
         self.count_additional = 0
 
     @staticmethod
-    @abstractmethod
     def _compute_sliced_volume_inner(
         fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
     ) -> float:
-        # this is static ton maybe later using in parallel
-        pass
+        axes_param = list(range(len(param)))
+        if config.integration_method == "mc":
+            return fslset.sliced_volume_mc(param, axes_param, config.n_mc_integral)
+        elif config.integration_method == "grid":
+            return fslset.sliced_volume_grid(param, axes_param, config.n_grid)
+        else:
+            assert False
 
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         return self._compute_sliced_volume_inner(self.fslset, param, self.config)
@@ -228,13 +233,6 @@ class HolllessActiveSampler(ActiveSamplerBase):
         new_metric = CompositeMetric([self.metric.metirics[0], metric_co])
         self.metric = new_metric
 
-    @staticmethod
-    def _compute_sliced_volume_inner(
-        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
-    ) -> float:
-        axes_param = list(range(len(param)))
-        return fslset.sliced_volume_grid(param, axes_param, config.n_grid)
-
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
         surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
         if surface is None:
@@ -249,13 +247,6 @@ class HolllessActiveSampler(ActiveSamplerBase):
 class NaiveActiveSampler(ActiveSamplerBase):
     def update_metric(self) -> None:
         pass
-
-    @staticmethod
-    def _compute_sliced_volume_inner(
-        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
-    ) -> float:
-        axes_param = list(range(len(param)))
-        return fslset.sliced_volume_mc(param, axes_param, config.n_mc_integral)
 
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         return self.fslset.sliced_volume_mc(param, self.axes_param, self.config.n_mc_integral)
