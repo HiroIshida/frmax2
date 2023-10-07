@@ -21,6 +21,7 @@ class ActiveSamplerConfig:
     n_mc_integral: int = 100
     c_svm: float = 1e4
     n_process: int = 1  # if > 1, use multiprocessing
+    learning_rate: float = 1.0
     integration_method: Literal["mc", "grid"] = "grid"
     measure_width_method: Literal["mc", "grid"] = "grid"
     sample_error_method: Literal["mc-margin", "mc-inside", "grid"] = "grid"
@@ -189,10 +190,16 @@ class ActiveSamplerBase(ABC):
     def ask(self) -> np.ndarray:
         assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
+        assert len(param_cands) > 0
         # update param_best_so_far
+        best_param = None
         idx_max_volume = np.argmax(volumes)
         if self.compute_sliced_volume(self.best_param_so_far) < volumes[idx_max_volume]:
-            self.best_param_so_far = param_cands[idx_max_volume]
+            best_param = param_cands[idx_max_volume]
+        if best_param is not None:
+            self.best_param_so_far += self.config.learning_rate * (
+                best_param - self.best_param_so_far
+            )
 
         # sample points
         x_best = None
