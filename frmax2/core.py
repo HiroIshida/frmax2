@@ -182,11 +182,13 @@ class ActiveSamplerBase(ABC):
             mean = np.mean(volumes)
             indices_better = np.where(volumes >= mean)[0]
             is_all_equal = len(indices_better) == self.config.n_mc_param_search
-            if not is_all_equal:
+            if not is_all_equal and len(indices_better) > 0:
                 return param_sampled[indices_better], volumes[indices_better]
             trial_count += 1
-            if trial_count % 10 == 9:
-                r *= 1.5  # increase radius to explore more
+            r *= 1.1  # increase radius to explore more
+            print(f"trial count: {trial_count}")
+            if trial_count == 10:
+                assert False
         assert False
 
     def _ask(self) -> List[Tuple[np.ndarray, float]]:
@@ -211,16 +213,23 @@ class ActiveSamplerBase(ABC):
                 assert len(x) == self.dim
                 uncertainty = np.min(self.metric(x, self.X))
                 x_uncertainty_pairs.append((x, uncertainty))
-        x_uncertainty_pairs.sort(key=lambda x: -x[1])
         return x_uncertainty_pairs
 
     def ask(self) -> np.ndarray:
-        x_uncertainty_pair = self._ask()
-        return x_uncertainty_pair[0][0]
+        x_uncertainty_pairs = self._ask()
+        x_uncertainty_pairs.sort(key=lambda x: -x[1])
+        return x_uncertainty_pairs[0][0]
 
     def ask_n_best(self, n: int) -> List[np.ndarray]:
-        x_uncertainty_pair = self._ask()
-        return [x for x, _ in x_uncertainty_pair[:n]]
+        x_uncertainty_pairs = self._ask()
+        x_uncertainty_pairs.sort(key=lambda x: -x[1])
+        x_best = x_uncertainty_pairs[0][0]
+        x_uncertainty_pairs = x_uncertainty_pairs[1:]
+        np.random.shuffle(x_uncertainty_pairs)
+        if len(x_uncertainty_pairs) < n:
+            return [x_best] + [x for x, _ in x_uncertainty_pairs]
+        else:
+            return [x_best] + [x for x, _ in x_uncertainty_pairs[: n - 1]]
 
     def ask_additional(self) -> np.ndarray:
         param_here = self.best_param_so_far
