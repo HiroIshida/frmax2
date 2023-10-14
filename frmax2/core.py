@@ -188,7 +188,7 @@ class ActiveSamplerBase(ABC):
                 r *= 1.5  # increase radius to explore more
         assert False
 
-    def ask(self) -> np.ndarray:
+    def _ask(self) -> List[Tuple[np.ndarray, float]]:
         assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
         assert len(param_cands) > 0
@@ -202,21 +202,24 @@ class ActiveSamplerBase(ABC):
                 best_param - self.best_param_so_far
             )
 
-        # sample points
-        x_best = None
-        uncertainty_max = -np.inf
+        x_uncertainty_pairs = []
         for param in param_cands:
             co_points = self.sample_sliced_points(param)
             for co_point in co_points:
                 x = np.hstack([param, co_point])
                 assert len(x) == self.dim
                 uncertainty = np.min(self.metric(x, self.X))
-                if uncertainty > uncertainty_max:
-                    uncertainty_max = uncertainty
-                    x_best = x
-        assert x_best is not None
-        assert len(x_best) == self.dim
-        return x_best
+                x_uncertainty_pairs.append((x, uncertainty))
+        x_uncertainty_pairs.sort(key=lambda x: -x[1])
+        return x_uncertainty_pairs
+
+    def ask(self) -> np.ndarray:
+        x_uncertainty_pair = self._ask()
+        return x_uncertainty_pair[0][0]
+
+    def ask_n_best(self, n: int) -> List[np.ndarray]:
+        x_uncertainty_pair = self._ask()
+        return [x for x, _ in x_uncertainty_pair[:n]]
 
     def ask_additional(self) -> np.ndarray:
         param_here = self.best_param_so_far
@@ -241,9 +244,21 @@ class ActiveSamplerBase(ABC):
         return np.hstack([param_here, e_new])
 
     def tell(self, x: np.ndarray, y: bool) -> None:
+        assert x.ndim == 1
         self.update_metric()
         X = np.vstack([self.X, x])
         Y = np.hstack([self.Y, y])
+        self.X = X
+        self.Y = Y
+        self.fslset = SuperlevelSet.fit(
+            X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
+        )
+
+    def tell_multi(self, X: np.ndarray, Y: np.ndarray) -> None:
+        assert X.ndim == 2
+        self.update_metric()
+        X = np.vstack([self.X, X])
+        Y = np.hstack([self.Y, Y])
         self.X = X
         self.Y = Y
         self.fslset = SuperlevelSet.fit(
