@@ -117,7 +117,8 @@ class ActiveSamplerBase(ABC):
             points = self.fslset.sample_mc_points_sliced(
                 param, self.axes_param, self.config.n_mc_integral
             )
-            points_inside = points[self.fslset.func(points) > -0.0]
+            negative_side_f_value = -1.0
+            points_inside = points[self.fslset.func(points) > negative_side_f_value]
             return points_inside[:, axes_co]
         elif self.config.sample_error_method == "grid":
             surface = self.fslset.get_surface_by_slicing(param, self.axes_param, self.config.n_grid)
