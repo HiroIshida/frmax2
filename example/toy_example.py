@@ -27,10 +27,10 @@ ls_co = np.array([0.3])
 metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 
 if args.method == "hollless":
-    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30)
+    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30, box_cut=False)
     sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
 else:
-    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30)
+    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=30, box_cut=False)
     sampler = NaiveActiveSampler(X, Y, metric, param_init, config)
 
 for i in range(args.n):

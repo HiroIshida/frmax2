@@ -67,6 +67,7 @@ class SuperlevelSet:
     b_min: np.ndarray
     b_max: np.ndarray
     func: Callable[[np.ndarray], np.ndarray]
+    box_cut: bool
 
     def __post_init__(self):
         for e in [self.b_min, self.b_max]:
@@ -84,6 +85,7 @@ class SuperlevelSet:
         metric: MetricBase,
         C: float = 1e8,
         margin: float = 0.5,
+        box_cut: bool = True,
     ) -> "SuperlevelSet":
 
         kernel = metric.gen_aniso_rbf_kernel()
@@ -98,7 +100,7 @@ class SuperlevelSet:
         width_tmp = b_max_tmp - b_min_tmp
         b_min = b_min_tmp - width_tmp * margin
         b_max = b_max_tmp + width_tmp * margin
-        return cls(b_min, b_max, svc.decision_function)
+        return cls(b_min, b_max, svc.decision_function, box_cut)
 
     def sample_mc_points_sliced(
         self, point_slice: np.ndarray, axes_slice: List[int], n_mc: int
@@ -225,10 +227,11 @@ class SuperlevelSet:
         b_min_co = self.b_min[axes_co]
         b_max_co = self.b_max[axes_co]
 
-        # workaround for the case where the surface is not closed
-        # value outside of the box should be smaller than 0
-        sd_vals = -box_sdf(grid_points[:, axes_co], b_min_co, b_max_co)
-        values = np.minimum(values, sd_vals)
+        if self.box_cut:
+            # workaround for the case where the surface is not closed
+            # value outside of the box should be smaller than 0
+            sd_vals = -box_sdf(grid_points[:, axes_co], b_min_co, b_max_co)
+            values = np.minimum(values, sd_vals)
 
         if dim_co == 1:
             return self._get_surface_by_slicing_1d(values, b_min_co, b_max_co, n_grid)

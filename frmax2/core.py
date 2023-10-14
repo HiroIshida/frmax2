@@ -25,6 +25,7 @@ class ActiveSamplerConfig:
     integration_method: Literal["mc", "grid"] = "grid"
     measure_width_method: Literal["mc", "grid"] = "grid"
     sample_error_method: Literal["mc-margin", "mc-inside", "grid"] = "grid"
+    box_cut: bool = False
 
 
 class SamplerCache:
@@ -57,7 +58,7 @@ class ActiveSamplerBase(ABC):
         config: ActiveSamplerConfig = ActiveSamplerConfig(),
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
     ):
-        slset = SuperlevelSet.fit(X, Y, metric, C=config.c_svm)
+        slset = SuperlevelSet.fit(X, Y, metric, C=config.c_svm, box_cut=config.box_cut)
         self.fslset = slset
         self.metric = metric
         self.config = config
@@ -245,7 +246,9 @@ class ActiveSamplerBase(ABC):
         Y = np.hstack([self.Y, y])
         self.X = X
         self.Y = Y
-        self.fslset = SuperlevelSet.fit(X, Y, self.metric, C=self.config.c_svm)
+        self.fslset = SuperlevelSet.fit(
+            X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
+        )
 
 
 class HolllessActiveSampler(ActiveSamplerBase):
