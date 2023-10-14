@@ -4,10 +4,10 @@ import dill
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
-from environment import GaussianEnvironment
-from frmax.initialize import initialize
 
 from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
+from frmax2.environment import GaussianEnvironment
+from frmax2.initialize import initialize
 from frmax2.metric import CompositeMetric
 
 parser = argparse.ArgumentParser()
@@ -15,12 +15,12 @@ parser.add_argument("--method", type=str, default="hollless")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--cache", action="store_true")
 
-parser.add_argument("-n", type=int, default=400)
+parser.add_argument("-n", type=int, default=200)
 args = parser.parse_args()
 
 np.random.seed(args.seed)
 
-env = GaussianEnvironment(16, 2, with_bias=True)
+env = GaussianEnvironment(1, 2, with_bias=True)
 ls_param, ls_co = env.default_lengthscales()
 param_init = env.default_init_param()
 e_length = np.array([8.0, 8.0])
@@ -29,7 +29,7 @@ if not args.cache:
     X, Y, ls_co = initialize(lambda x: +1 if env.isInside(x) else -1, param_init, e_length, eps=0.2)
     metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 
-    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=20)
+    config = ActiveSamplerConfig(n_mc_param_search=100, n_grid=20, integration_method="mc")
     sampler = HolllessActiveSampler(X, Y, metric, param_init, config)
 
     for i in tqdm.tqdm(range(args.n)):

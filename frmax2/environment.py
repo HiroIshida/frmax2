@@ -1,5 +1,4 @@
 import math
-from abc import ABC
 from typing import Tuple
 
 import numpy as np
@@ -10,7 +9,7 @@ def npdf(dist_from_center: float) -> float:
     return math.exp(-0.5 * dist_from_center**2)
 
 
-class GaussianEnvironment(ABC):
+class GaussianEnvironment:
     def __init__(self, n_dim: int, m_dim: int, with_bias: bool = False):
         self.n_dim = n_dim
         self.m_dim = m_dim
