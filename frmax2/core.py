@@ -20,6 +20,8 @@ class ActiveSamplerConfig:
     aabb_margin: float = 0.5
     n_mc_integral: int = 100
     c_svm: float = 1e4
+    c_svm_min: float = 10
+    c_svm_reduction_rate: float = 1.0
     n_process: int = 1  # if > 1, use multiprocessing
     learning_rate: float = 1.0
     integration_method: Literal["mc", "grid"] = "grid"
@@ -48,6 +50,7 @@ class ActiveSamplerBase(ABC):
     axes_param: List[int]
     sampler_cache: SamplerCache
     count_additional: int
+    c_svm_current: float
 
     def __init__(
         self,
@@ -58,7 +61,8 @@ class ActiveSamplerBase(ABC):
         config: ActiveSamplerConfig = ActiveSamplerConfig(),
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
     ):
-        slset = SuperlevelSet.fit(X, Y, metric, C=config.c_svm, box_cut=config.box_cut)
+        c_svm_current = config.c_svm
+        slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
         self.fslset = slset
         self.metric = metric
         self.config = config
@@ -69,6 +73,7 @@ class ActiveSamplerBase(ABC):
         self.Y = Y
         self.axes_param = list(range(len(param_init)))
         self.sampler_cache = SamplerCache()
+        self.c_svm_current = c_svm_current
         self.count_additional = 0
 
     @staticmethod
@@ -255,17 +260,16 @@ class ActiveSamplerBase(ABC):
 
     def tell(self, x: np.ndarray, y: bool) -> None:
         assert x.ndim == 1
-        self.update_metric()
-        X = np.vstack([self.X, x])
-        Y = np.hstack([self.Y, y])
-        self.X = X
-        self.Y = Y
-        self.fslset = SuperlevelSet.fit(
-            X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
-        )
+        X = np.array([x])
+        Y = np.array([y])
+        self.tell_multi(X, Y)
 
     def tell_multi(self, X: np.ndarray, Y: np.ndarray) -> None:
         assert X.ndim == 2
+        self.c_svm_current = max(
+            self.config.c_svm_min, self.c_svm_current * self.config.c_svm_reduction_rate
+        )
+        logger.debug(f"current c_svm: {self.c_svm_current}")
         self.update_metric()
         X = np.vstack([self.X, X])
         Y = np.hstack([self.Y, Y])
