@@ -120,7 +120,7 @@ class SuperlevelSet:
     def sliced_volume_mc(self, point_slice: np.ndarray, axes_slice: List[int], n_mc: int) -> float:
         """compute volume of the sliced region by Monte Carlo integration"""
         points = self.sample_mc_points_sliced(point_slice, axes_slice, n_mc)
-        count_is_inside = int(np.sum(self.func(points) > -1))
+        count_is_inside = int(np.sum(self.func(points) > 0.0))
         axes_co = get_co_axes(self.dim, axes_slice)
         b_min_co = self.b_min[axes_co]
         b_max_co = self.b_max[axes_co]
