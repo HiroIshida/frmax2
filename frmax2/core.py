@@ -309,9 +309,180 @@ class HolllessActiveSampler(ActiveSamplerBase):
         return self.config.sample_error_method != "mc-inside"
 
 
-class NaiveActiveSampler(ActiveSamplerBase):
-    def update_metric(self) -> None:
-        pass
+class DistributionGuidedSampler:
+    fslset: SuperlevelSet
+    metric: CompositeMetric
+    is_valid_param: Callable[[np.ndarray], bool]
+    config: ActiveSamplerConfig
+    best_param_so_far: np.ndarray
+    X: np.ndarray
+    Y: np.ndarray
+    axes_param: List[int]
+    sampler_cache: SamplerCache
+    count_additional: int
+    c_svm_current: float
+    situation_sampler: Callable[[], np.ndarray]
 
-    def check_config_compat(self) -> bool:
-        return self.config.sample_error_method == "mc-inside"
+    def __init__(
+        self,
+        X: np.ndarray,  # float
+        Y: np.ndarray,  # bool
+        metric: CompositeMetric,
+        param_init: np.ndarray,
+        situation_sampler: Callable[[], np.ndarray],
+        config: ActiveSamplerConfig = ActiveSamplerConfig(),
+        is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
+    ):
+        c_svm_current = config.c_svm
+        slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
+        self.fslset = slset
+        self.situation_sampler = situation_sampler
+        self.metric = metric
+        self.config = config
+        self.best_param_so_far = param_init
+        if is_valid_param is None:
+            self.is_valid_param = lambda x: True
+        self.X = X
+        self.Y = Y
+        self.axes_param = list(range(len(param_init)))
+        self.sampler_cache = SamplerCache()
+        self.c_svm_current = c_svm_current
+        self.count_additional = 0
+
+    @property
+    def dim(self) -> int:
+        # perfectly copied from ActiveSamplerBase
+        return self.metric.dim
+
+    def tell(self, x: np.ndarray, y: bool) -> None:
+        # perfectly copied from ActiveSamplerBase
+        assert x.ndim == 1
+        X = np.array([x])
+        Y = np.array([y])
+        self.tell_multi(X, Y)
+
+    def tell_multi(self, X: np.ndarray, Y: np.ndarray) -> None:
+        # perfectly copied from ActiveSamplerBase
+        assert X.ndim == 2
+        self.c_svm_current = max(
+            self.config.c_svm_min, self.c_svm_current * self.config.c_svm_reduction_rate
+        )
+        logger.debug(f"current c_svm: {self.c_svm_current}")
+        X = np.vstack([self.X, X])
+        Y = np.hstack([self.Y, Y])
+        self.X = X
+        self.Y = Y
+        self.fslset = SuperlevelSet.fit(
+            X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
+        )
+
+    def compute_sliced_volume(self, param: np.ndarray) -> float:
+        # perfectly copied from ActiveSamplerBase
+        return self._compute_sliced_volume_inner(self.fslset, param, self.config)
+
+    def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
+        # perfectly copied from ActiveSamplerBase
+        if self.config.n_process == 1:
+            return np.array(
+                [
+                    self._compute_sliced_volume_inner(self.fslset, param, self.config)
+                    for param in params
+                ]
+            )
+        else:
+            n_param = len(params)
+            with ProcessPoolExecutor(self.config.n_process) as executor:
+                results = executor.map(
+                    self._compute_sliced_volume_inner,
+                    [self.fslset] * n_param,
+                    params,
+                    [self.config] * n_param,
+                )
+            return np.array(list(results))
+
+    def _determine_param_candidates(self) -> Tuple[np.ndarray, np.ndarray]:
+        # perfectly copied from ActiveSamplerBase
+
+        def sample_until_valid(r_param: float) -> np.ndarray:
+            while True:
+                rand_params = param_metric.generate_random_inball(
+                    param_center, self.config.n_mc_param_search, r_param
+                )
+                filtered = list(filter(self.is_valid_param, rand_params))
+                if len(filtered) > 0:
+                    return np.array(filtered)
+                logger.debug("sample from ball again as no samples satisfies constraint")
+
+        param_metric = self.metric.metirics[0]
+        param_center = self.best_param_so_far
+        logger.debug(f"current best param: {param_center}")
+        logger.info(f"current best volume: {self.compute_sliced_volume(param_center)}")
+
+        self.sampler_cache.best_param_history.append(param_center)
+        self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
+
+        trial_count = 0
+        r = self.config.r_exploration
+        while True:
+            param_sampled = sample_until_valid(r)
+            volumes = self.compute_sliced_volume_batch(list(param_sampled))
+            mean = np.mean(volumes)
+            indices_better = np.where(volumes >= mean)[0]
+            is_all_equal = len(indices_better) == self.config.n_mc_param_search
+            if not is_all_equal and len(indices_better) > 0:
+                return param_sampled[indices_better], volumes[indices_better]
+            trial_count += 1
+            r *= 1.1  # increase radius to explore more
+            print(f"trial count: {trial_count}")
+            if trial_count == 10:
+                assert False
+        assert False
+
+    def _compute_sliced_volume_inner(
+        self, fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
+    ) -> float:
+        assert config.integration_method == "mc"
+        count = 0
+        for _ in range(config.n_mc_integral):
+            situation = self.situation_sampler()
+            x = np.hstack([param, situation])
+            if self.fslset.func(np.array([x]))[0] > 0:
+                count += 1
+        return count / config.n_mc_integral
+
+    def ask(self) -> np.ndarray:
+        # COPIED FROM ActiveSamplerBase
+        assert self.count_additional == 0
+        param_cands, volumes = self._determine_param_candidates()
+        assert len(param_cands) > 0
+        # update param_best_so_far
+        best_param = None
+        idx_max_volume = np.argmax(volumes)
+        if self.compute_sliced_volume(self.best_param_so_far) < volumes[idx_max_volume]:
+            best_param = param_cands[idx_max_volume]
+        if best_param is not None:
+            self.best_param_so_far += self.config.learning_rate * (
+                best_param - self.best_param_so_far
+            )
+        # FINISH COPYING
+
+        param_metric = self.metric.metirics[0]
+        param_center = self.best_param_so_far
+
+        params = []
+        while len(params) < 10:
+            rand_param = param_metric.generate_random_inball(
+                param_center, self.config.n_mc_param_search, self.config.r_exploration
+            )[0]
+            if self.is_valid_param(rand_param):
+                params.append(rand_param)
+
+        x_uncertainty_pairs = []
+        for param in params:
+            for _ in range(10):
+                situation = self.situation_sampler()
+                x = np.hstack([param, situation])
+                uncertainty = np.min(self.metric(x, self.X))
+                x_uncertainty_pairs.append((x, uncertainty))
+        x_uncertainty_pairs.sort(key=lambda x: -x[1])
+        return x_uncertainty_pairs[0][0]
