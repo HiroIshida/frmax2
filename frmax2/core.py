@@ -450,7 +450,7 @@ class DistributionGuidedSampler:
                 count += 1
         return count / config.n_mc_integral
 
-    def ask(self) -> np.ndarray:
+    def ask(self) -> Optional[np.ndarray]:
         # COPIED FROM ActiveSamplerBase
         assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
@@ -468,6 +468,7 @@ class DistributionGuidedSampler:
 
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
+        do_exploitition = np.random.rand() < 0.6
 
         params = []
         while len(params) < 10:
@@ -483,6 +484,14 @@ class DistributionGuidedSampler:
                 situation = self.situation_sampler()
                 x = np.hstack([param, situation])
                 uncertainty = np.min(self.metric(x, self.X))
+                if do_exploitition:
+                    value = self.fslset.func(np.array([x]))[0]
+                    inside_svm_margin = value > 0 and value < 1.0
+                    # inside_svm_margin = np.abs(value) < 1.0
+                    if not inside_svm_margin:
+                        continue
                 x_uncertainty_pairs.append((x, uncertainty))
+        if len(x_uncertainty_pairs) == 0:
+            return None
         x_uncertainty_pairs.sort(key=lambda x: -x[1])
         return x_uncertainty_pairs[0][0]
