@@ -1,3 +1,7 @@
+import argparse
+import pickle
+import logging
+from pathlib import Path
 from dataclasses import dataclass
 from typing import List
 
@@ -5,6 +9,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 import torch.nn as nn
+import tqdm
+
+from frmax2.core import ActiveSamplerConfig, DistributionGuidedSampler, SamplerCache
+from frmax2.initialize import initialize
+from frmax2.metric import CompositeMetric
+from frmax2.utils import create_default_logger
 
 
 @dataclass
@@ -50,7 +60,7 @@ class Cartpole:
 
     def is_uplight(self) -> bool:
         x, x_dot, theta, theta_dot = self.state
-        return abs(np.cos(theta) - (-1)) < 0.04 and abs(theta_dot) < 0.1
+        return abs(np.cos(theta) - (-1)) < 0.04 and abs(theta_dot) < 0.05
         # return abs(np.cos(theta) - (-1)) < 0.01 and abs(theta_dot) < 0.01
 
     def render(self, ax):
@@ -112,12 +122,14 @@ class EnergyShapingController:
 class ResidualPolicyNet(nn.Module):
     def __init__(self):
         super().__init__()
+        n = 6
+        # n = 12
         layers = []
-        layers.append(nn.Linear(4, 12))
+        layers.append(nn.Linear(4, n))
         layers.append(nn.Tanh())
-        layers.append(nn.Linear(12, 12))
+        layers.append(nn.Linear(n, n))
         layers.append(nn.Tanh())
-        layers.append(nn.Linear(12, 1))
+        layers.append(nn.Linear(n, 1))
         self.layers = nn.Sequential(*layers)
 
     @property
@@ -150,7 +162,7 @@ class Policy:
         self,
         base_controller: EnergyShapingController,
         residual_net: ResidualPolicyNet,
-        residual_scaling: float = 1.0,
+        residual_scaling: float = 10.0,
     ):
         self.base_controller = base_controller
         self.residual_net = residual_net
@@ -160,21 +172,121 @@ class Policy:
         state_torch = th.from_numpy(state).float()
         action_residual = self.residual_net(state_torch).detach().cpu().numpy().item()
         action_base = self.base_controller(state)
-        print(f"action_base: {action_base}, action_residual: {action_residual}")
+        # print(f"action_base: {action_base}, action_residual: {action_residual}")
         action_total = action_base + self.residual_scaling * action_residual
         return action_total
 
 
-if __name__ == "__main__":
-    net = ResidualPolicyNet()
-    net.set_parameter(np.random.randn(net.dof) * 0.0)
-    policy = Policy(EnergyShapingController(ModelParameter()), net)
+class Environment:
+    residual_net: ResidualPolicyNet
 
-    system = Cartpole(np.array([0.0, 0.0, 0.3, 0.0]))
-    for _ in range(1000):
-        state = system.state
-        action = policy(state)
-        system.step(action)
-        if system.is_uplight():
-            print("success")
-            break
+    def __init__(self):
+        self.residual_net = ResidualPolicyNet()
+
+    def rollout(self, x: np.ndarray) -> bool:
+        param_dof = self.residual_net.dof
+        param = x[:param_dof]
+        error = x[param_dof:]
+        res = self._rollout(param, error)
+        print(f"param: {param.shape}, error: {error}, res: {res}")
+        return res
+
+    def _rollout(self, param: np.ndarray, error: np.ndarray) -> bool:
+        self.residual_net.set_parameter(param)
+        policy = Policy(EnergyShapingController(ModelParameter()), self.residual_net)
+        assert len(error) == 1
+        m = 1.0 + error[0]
+        model_param = ModelParameter(m=m)
+        system = Cartpole(np.zeros(4), model_param=model_param)
+        for i in range(1000):
+            state = system.state
+            action = policy(state)
+            system.step(action)
+            if system.is_uplight():
+                return True
+        return False
+
+
+if __name__ == "__main__":
+    # argparse to select mode
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", type=str, default="train")
+    parser.add_argument("-n", type=int, default=300)
+
+    args = parser.parse_args()
+
+    if args.mode == "train":
+        np.random.seed(1)
+        env = Environment()
+        param_init = np.random.randn(env.residual_net.dof) * 0.01
+        print(f"param_init: {param_init.shape}")
+        e_list = np.linspace(-0.5, 0.5, 50)
+        X = []
+        Y = []
+        for e in tqdm.tqdm(e_list):
+            res = env._rollout(param_init, np.array([e]))
+            Y.append(res)
+            X.append(np.hstack([param_init, e]))
+        X = np.array(X)
+        Y = np.array(Y)
+        assert sum(Y) > 0
+        ls_param = np.array([0.3] * env.residual_net.dof)
+        ls_error = np.array([0.01])
+        metric = CompositeMetric.from_ls_list([ls_param, ls_error])
+        config = ActiveSamplerConfig(
+            n_mc_param_search=10,
+            c_svm=100000,
+            integration_method="mc",
+            n_mc_integral=100,
+            r_exploration=2.0,
+            learning_rate=0.3,
+        )
+
+        def situation_sampler() -> np.ndarray:
+            w = 1.5
+            e = np.random.rand() * w - 0.5 * w
+            return np.array([e])
+
+        sampler = DistributionGuidedSampler(
+            X, Y, metric, param_init, situation_sampler=situation_sampler, config=config
+        )
+
+        create_default_logger(Path("/tmp/"), "train", logging.INFO)
+
+        for i in tqdm.tqdm(range(args.n)):
+            print(i)
+            x = sampler.ask()
+            if x is None:
+                continue
+            sampler.tell(x, env.rollout(x))
+            if i % 10 == 0:
+                # save sampler
+                file_path = Path("./sampler.pkl")
+                with file_path.open(mode = "wb") as f:
+                    pickle.dump(sampler.sampler_cache, f)
+    elif args.mode == "test":
+        # load sampler
+        file_path = Path("./sampler.pkl")
+        with file_path.open(mode = "rb") as f:
+            sampler_cache: SamplerCache = pickle.load(f)
+        import matplotlib.pyplot as plt
+        print(sampler_cache.best_volume_history)
+        print(sampler_cache.best_param_history[-1])
+        plt.plot(sampler_cache.best_volume_history)
+        plt.show()
+
+        env = Environment()
+        param_init = sampler_cache.best_param_history[-1]
+        print(param_init)
+        volume = sampler_cache.best_volume_history[-1]
+        print(f"expected volume: {volume}")
+
+        e_list = np.linspace(-0.75, 0.75, 100)
+        bools = []
+        for e in tqdm.tqdm(e_list):
+            res = env._rollout(param_init, np.array([e]))
+            bools.append(res)
+        bools = np.array(bools)
+        print(f"actual volume: {np.sum(bools) / len(bools)}")
+        plt.plot(e_list, bools, "o")
+        plt.show()
