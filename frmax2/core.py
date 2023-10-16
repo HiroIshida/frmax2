@@ -24,6 +24,7 @@ class ActiveSamplerConfig:
     c_svm_reduction_rate: float = 1.0
     n_process: int = 1  # if > 1, use multiprocessing
     learning_rate: float = 1.0
+    param_ls_reduction_rate: float = 0.995  # only used in DistributionGuidedSampler
     integration_method: Literal["mc", "grid"] = "grid"
     measure_width_method: Literal["mc", "grid"] = "grid"
     sample_error_method: Literal["mc-margin", "mc-inside", "grid"] = "grid"
@@ -362,12 +363,22 @@ class DistributionGuidedSampler:
         self.tell_multi(X, Y)
 
     def tell_multi(self, X: np.ndarray, Y: np.ndarray) -> None:
-        # perfectly copied from ActiveSamplerBase
         assert X.ndim == 2
         self.c_svm_current = max(
             self.config.c_svm_min, self.c_svm_current * self.config.c_svm_reduction_rate
         )
         logger.debug(f"current c_svm: {self.c_svm_current}")
+
+        # only here is different from ActiveSamplerBase
+        metric_param = self.metric.metirics[0]
+        mat = metric_param.cmat
+        ls_param = np.sqrt(np.diag(mat))
+        ls_param = ls_param * self.config.param_ls_reduction_rate
+        logger.info(f"current ls_param: {ls_param[0]}")
+        metric_param = Metric.from_ls(ls_param)
+        new_metric = CompositeMetric([metric_param, self.metric.metirics[1]])
+        self.metric = new_metric
+
         X = np.vstack([self.X, X])
         Y = np.hstack([self.Y, Y])
         self.X = X
