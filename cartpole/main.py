@@ -161,6 +161,8 @@ if __name__ == "__main__":
     logger = create_default_logger(Path("/tmp/"), "train", logging.INFO)
     param_dof = 7
 
+    file_path = Path(f"./sampler-cache-{args.m}.pkl")
+
     if args.mode == "train":
         np.random.seed(1)
         env = Environment(param_dof)
@@ -256,12 +258,10 @@ if __name__ == "__main__":
             sampler.tell(x, env.rollout(x))
             if i % 10 == 0:
                 # save sampler
-                file_path = Path("./sampler.pkl")
                 with file_path.open(mode="wb") as f:
                     dill.dump(sampler, f)
     elif args.mode == "test":
         # load sampler
-        file_path = Path("./sampler.pkl")
         with file_path.open(mode="rb") as f:
             sampler: DistributionGuidedSampler = dill.load(f)
             sampler_cache: SamplerCache = sampler.sampler_cache
