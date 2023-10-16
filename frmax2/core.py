@@ -342,7 +342,8 @@ class DistributionGuidedSampler:
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
-            self.is_valid_param = lambda x: True
+            is_valid_param = lambda x: True
+        self.is_valid_param = is_valid_param
         self.X = X
         self.Y = Y
         self.axes_param = list(range(len(param_init)))
@@ -374,7 +375,7 @@ class DistributionGuidedSampler:
         mat = metric_param.cmat
         ls_param = np.sqrt(np.diag(mat))
         ls_param = ls_param * self.config.param_ls_reduction_rate
-        logger.info(f"current ls_param: {ls_param[0]}")
+        logger.info(f"current ls_param: {ls_param}")
         metric_param = Metric.from_ls(ls_param)
         new_metric = CompositeMetric([metric_param, self.metric.metirics[1]])
         self.metric = new_metric
