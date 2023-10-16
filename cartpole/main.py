@@ -310,8 +310,8 @@ if __name__ == "__main__":
             # scatter plot positive
             fig, ax = plt.subplots()
             sampler.fslset.show_sliced(param_init, list(range(len(param_init))), 50, (fig, ax))
-            ax.scatter(X[Y, -2], X[Y, -1], c="blue")
-            ax.scatter(X[~Y, -2], X[~Y, -1], c="red")
+            ax.scatter(X[Y, -1], X[Y, -2], c="blue")
+            ax.scatter(X[~Y, -1], X[~Y, -2], c="red")
             plt.show()
         elif args.m == 3:
             param_init = sampler_cache.best_param_history[0]
