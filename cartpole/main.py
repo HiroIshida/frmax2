@@ -62,7 +62,7 @@ class Policy:
         self,
         base_controller: Controller,
         residual_net: ResidualPolicyNet,
-        residual_scaling: float = 10.0,
+        residual_scaling: float = 1.0,
     ):
         self.base_controller = base_controller
         self.residual_net = residual_net
@@ -101,11 +101,13 @@ class Environment:
         l = 1.0 + error[2] if len(error) > 2 else 1.0
         model_param = ModelParameter(m=m, M=M, l=l)
         system = Cartpole(np.zeros(4), model_param=model_param)
-        for i in range(10000):
-            state = system.state
-            action = policy(state)
-            system.step(action)
-            if system.is_uplight():
+        for i in range(300):
+            u = policy(system.state)
+            system.step(u)
+            x, _, _, _ = system.state
+            if abs(x) > 10.0:
+                return False
+            if system.is_static():
                 return True
         return False
 
@@ -147,7 +149,6 @@ if __name__ == "__main__":
                 w = 1.5
                 e = np.random.rand(args.m) * w - 0.5 * w
                 return np.array(e)
-
         else:
 
             def situation_sampler() -> np.ndarray:
@@ -162,7 +163,7 @@ if __name__ == "__main__":
             r_exploration = 2.0
         elif args.m == 2:
             n_mc_integral = 120
-            learning_rate = 0.1
+            learning_rate = 0.05
             r_exploration = 2.0
         else:
             n_mc_integral = 300
@@ -209,7 +210,7 @@ if __name__ == "__main__":
 
         env = Environment()
         param_init = sampler_cache.best_param_history[-1]
-        # param_init = sampler_cache.best_param_history[0]
+        # param_init = sampler_cache.best_param_history[0] * 0.1
         volume = sampler_cache.best_volume_history[-1]
         print(f"expected volume: {volume}")
 
@@ -230,7 +231,7 @@ if __name__ == "__main__":
             plt.plot(es, decision_values, "-")
             plt.show()
         elif args.m == 2:
-            # param_init = sampler_cache.best_param_history[0]
+            param_init = sampler_cache.best_param_history[0]
             X = []
             Y = []
             for i in tqdm.tqdm(range(100)):
