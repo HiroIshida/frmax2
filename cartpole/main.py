@@ -1,10 +1,10 @@
 import argparse
-import pickle
 import logging
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
+import dill
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -12,7 +12,6 @@ import torch.nn as nn
 import tqdm
 
 from frmax2.core import ActiveSamplerConfig, DistributionGuidedSampler, SamplerCache
-from frmax2.initialize import initialize
 from frmax2.metric import CompositeMetric
 from frmax2.utils import create_default_logger
 
@@ -194,9 +193,11 @@ class Environment:
     def _rollout(self, param: np.ndarray, error: np.ndarray) -> bool:
         self.residual_net.set_parameter(param)
         policy = Policy(EnergyShapingController(ModelParameter()), self.residual_net)
-        assert len(error) == 1
+        assert len(error) <= 3
         m = 1.0 + error[0]
-        model_param = ModelParameter(m=m)
+        M = 1.0 + error[1] if len(error) > 1 else 1.0
+        l = 1.0 + error[2] if len(error) > 2 else 1.0
+        model_param = ModelParameter(m=m, M=M, l=l)
         system = Cartpole(np.zeros(4), model_param=model_param)
         for i in range(1000):
             state = system.state
@@ -212,46 +213,73 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("-n", type=int, default=300)
+    parser.add_argument("-m", type=int, default=2, help="number of error dim")
 
     args = parser.parse_args()
+
+    logger = create_default_logger(Path("/tmp/"), "train", logging.INFO)
 
     if args.mode == "train":
         np.random.seed(1)
         env = Environment()
         param_init = np.random.randn(env.residual_net.dof) * 0.01
+        ls_param = np.array([0.3] * env.residual_net.dof)
         print(f"param_init: {param_init.shape}")
-        e_list = np.linspace(-0.5, 0.5, 50)
+
         X = []
         Y = []
-        for e in tqdm.tqdm(e_list):
-            res = env._rollout(param_init, np.array([e]))
+        for i in tqdm.tqdm(range(50)):
+            e = -np.ones(args.m) * 0.5 + np.random.rand(args.m)
+            res = env._rollout(param_init, e)
             Y.append(res)
             X.append(np.hstack([param_init, e]))
         X = np.array(X)
         Y = np.array(Y)
         assert sum(Y) > 0
-        ls_param = np.array([0.3] * env.residual_net.dof)
-        ls_error = np.array([0.01])
+        logger.info(f"initial volume: {np.sum(Y) / len(Y)}")
+        ls_error = np.array([0.01] * args.m)
+
+        if args.m in (1, 2):
+
+            def situation_sampler() -> np.ndarray:
+                w = 1.5
+                e = np.random.rand(args.m) * w - 0.5 * w
+                return np.array(e)
+
+        else:
+
+            def situation_sampler() -> np.ndarray:
+                w = 0.6
+                e = np.random.rand(args.m) * w - 0.5 * w
+                return np.array(e)
+
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
+        if args.m == 1:
+            n_mc_integral = 80
+            learning_rate = 0.2
+            r_exploration = 2.0
+        elif args.m == 2:
+            n_mc_integral = 120
+            learning_rate = 0.1
+            r_exploration = 2.0
+        else:
+            n_mc_integral = 300
+            learning_rate = 0.05
+            # r_exploration = 1.2
+            r_exploration = 2.0
         config = ActiveSamplerConfig(
             n_mc_param_search=10,
-            c_svm=100000,
+            c_svm=1000,
             integration_method="mc",
-            n_mc_integral=100,
-            r_exploration=2.0,
-            learning_rate=0.3,
+            n_mc_integral=n_mc_integral,
+            r_exploration=r_exploration,
+            learning_rate=learning_rate,
+            param_ls_reduction_rate=0.998,
         )
-
-        def situation_sampler() -> np.ndarray:
-            w = 1.5
-            e = np.random.rand() * w - 0.5 * w
-            return np.array([e])
 
         sampler = DistributionGuidedSampler(
             X, Y, metric, param_init, situation_sampler=situation_sampler, config=config
         )
-
-        create_default_logger(Path("/tmp/"), "train", logging.INFO)
 
         for i in tqdm.tqdm(range(args.n)):
             print(i)
@@ -262,31 +290,73 @@ if __name__ == "__main__":
             if i % 10 == 0:
                 # save sampler
                 file_path = Path("./sampler.pkl")
-                with file_path.open(mode = "wb") as f:
-                    pickle.dump(sampler.sampler_cache, f)
+                with file_path.open(mode="wb") as f:
+                    dill.dump(sampler, f)
     elif args.mode == "test":
         # load sampler
         file_path = Path("./sampler.pkl")
-        with file_path.open(mode = "rb") as f:
-            sampler_cache: SamplerCache = pickle.load(f)
+        with file_path.open(mode="rb") as f:
+            sampler: DistributionGuidedSampler = dill.load(f)
+            sampler_cache: SamplerCache = sampler.sampler_cache
         import matplotlib.pyplot as plt
+
         print(sampler_cache.best_volume_history)
         print(sampler_cache.best_param_history[-1])
         plt.plot(sampler_cache.best_volume_history)
         plt.show()
 
         env = Environment()
-        param_init = sampler_cache.best_param_history[-1]
-        print(param_init)
+        param_init = sampler_cache.best_param_history[-2]
         volume = sampler_cache.best_volume_history[-1]
         print(f"expected volume: {volume}")
 
-        e_list = np.linspace(-0.75, 0.75, 100)
-        bools = []
-        for e in tqdm.tqdm(e_list):
-            res = env._rollout(param_init, np.array([e]))
-            bools.append(res)
-        bools = np.array(bools)
-        print(f"actual volume: {np.sum(bools) / len(bools)}")
-        plt.plot(e_list, bools, "o")
-        plt.show()
+        if args.m == 1:
+            e_list = []
+            bools = []
+            for i in tqdm.tqdm(range(100)):
+                e = sampler.situation_sampler()
+                res = env._rollout(param_init, e)
+                e_list.append(e)
+                bools.append(res)
+            print(f"actual volume: {np.sum(bools) / len(bools)}")
+            plt.plot(e_list, bools, "o")
+            es = np.linspace(min(e_list), max(e_list), 100)
+            decision_values = [
+                sampler.fslset.func(np.array([np.hstack([param_init, e])])) for e in es
+            ]
+            plt.plot(es, decision_values, "-")
+            plt.show()
+        elif args.m == 2:
+            # param_init = sampler_cache.best_param_history[0]
+            X = []
+            Y = []
+            for i in tqdm.tqdm(range(100)):
+                e = sampler.situation_sampler()
+                res = env._rollout(param_init, e)
+                Y.append(res)
+                X.append(np.hstack([param_init, e]))
+            X = np.array(X)
+            Y = np.array(Y)
+            volume = np.sum(Y) / len(Y)
+            print(f"actual volume: {volume}")
+            # scatter plot positive
+            fig, ax = plt.subplots()
+            sampler.fslset.show_sliced(param_init, list(range(len(param_init))), 50, (fig, ax))
+            ax.scatter(X[Y, -2], X[Y, -1], c="blue")
+            ax.scatter(X[~Y, -2], X[~Y, -1], c="red")
+            plt.show()
+        elif args.m == 3:
+            param_init = sampler_cache.best_param_history[0]
+            X = []
+            Y = []
+            for i in tqdm.tqdm(range(300)):
+                e = sampler.situation_sampler()
+                res = env._rollout(param_init, e)
+                Y.append(res)
+                X.append(np.hstack([param_init, e]))
+            X = np.array(X)
+            Y = np.array(Y)
+            volume = np.sum(Y) / len(Y)
+            print(f"actual volume: {volume}")
+        else:
+            assert False
