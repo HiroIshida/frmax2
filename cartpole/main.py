@@ -181,7 +181,7 @@ if __name__ == "__main__":
         Y = np.array(Y)
         assert sum(Y) > 0
         logger.info(f"initial volume: {np.sum(Y) / len(Y)}")
-        ls_error = np.array([0.01] * args.m)
+        ls_error = np.array([0.05] * args.m)
 
         if args.m in (1, 2):
 
