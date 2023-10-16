@@ -251,10 +251,11 @@ if __name__ == "__main__":
         )
 
         for i in tqdm.tqdm(range(args.n)):
-            print(i)
-            x = sampler.ask()
-            if x is None:
-                continue
+            sampler.update_center()
+            while True:
+                x = sampler.ask()
+                if x is not None:
+                    break
             sampler.tell(x, env.rollout(x))
             if i % 10 == 0:
                 # save sampler

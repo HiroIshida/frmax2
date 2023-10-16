@@ -462,8 +462,7 @@ class DistributionGuidedSampler:
                 count += 1
         return count / config.n_mc_integral
 
-    def ask(self) -> Optional[np.ndarray]:
-        # COPIED FROM ActiveSamplerBase
+    def update_center(self):
         assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
         assert len(param_cands) > 0
@@ -478,6 +477,7 @@ class DistributionGuidedSampler:
             )
         # FINISH COPYING
 
+    def ask(self) -> Optional[np.ndarray]:
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
         do_exploitition = np.random.rand() < 0.6
