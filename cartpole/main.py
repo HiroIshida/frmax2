@@ -1,8 +1,6 @@
 import argparse
 import logging
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List
 
 import dill
 import matplotlib.pyplot as plt
@@ -10,13 +8,17 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 import tqdm
-from scipy.integrate import odeint, solve_ivp
+from common import (
+    Cartpole,
+    Controller,
+    EnergyShapingController,
+    LQRController,
+    ModelParameter,
+)
 
 from frmax2.core import ActiveSamplerConfig, DistributionGuidedSampler, SamplerCache
 from frmax2.metric import CompositeMetric
 from frmax2.utils import create_default_logger
-
-from common import ModelParameter, Cartpole, EnergyShapingController, Controller
 
 
 class ResidualPolicyNet(nn.Module):
@@ -77,30 +79,65 @@ class Policy:
         return action_total
 
 
+class ParameterizedController:
+    def __init__(self, param: np.ndarray):
+        energy_alpha = param[0]
+        lqr_q = np.array(param[1:4])
+        lqr_r = param[4]
+        switch_coditing_theta = param[5]
+        switch_coditing_theta_dot = param[6]
+        nonlinear = EnergyShapingController(ModelParameter(), energy_alpha)
+        linear = LQRController(ModelParameter(), lqr_q, lqr_r)
+
+        def is_switchable(state: np.ndarray) -> bool:
+            x, x_dot, theta, theta_dot = state
+            return (
+                abs(np.cos(theta) - (-1)) < switch_coditing_theta
+                and abs(theta_dot) < switch_coditing_theta_dot
+            )
+
+        self.is_switchable = is_switchable
+        self.nonlinear_mode = True
+        self.nonlinear = nonlinear
+        self.linear = linear
+
+    def __call__(self, state: np.ndarray) -> float:
+        if self.is_switchable(state):
+            self.nonlinear_mode = False
+        if self.nonlinear_mode:
+            return self.nonlinear(state)
+        else:
+            return self.linear(state)[0]
+
+
 class Environment:
     residual_net: ResidualPolicyNet
+    param_dof: int
 
-    def __init__(self):
+    def __init__(self, param_dof: int):
         self.residual_net = ResidualPolicyNet()
+        self.param_dof = param_dof
 
     def rollout(self, x: np.ndarray) -> bool:
-        param_dof = self.residual_net.dof
+        # param_dof = self.residual_net.dof
+        param_dof = self.param_dof
         param = x[:param_dof]
         error = x[param_dof:]
         res = self._rollout(param, error)
-        print(f"param: {param.shape}, error: {error}, res: {res}")
+        print(f"param: {param}, error: {error}, res: {res}")
         return res
 
     def _rollout(self, param: np.ndarray, error: np.ndarray) -> bool:
-        self.residual_net.set_parameter(param)
-        base_controller = Controller(ModelParameter())
-        policy = Policy(base_controller, self.residual_net)
+        # self.residual_net.set_parameter(param)
+        # base_controller = Controller(ModelParameter())
+        # policy = Policy(base_controller, self.residual_net)
+        policy = ParameterizedController(param)
         assert len(error) <= 3
         m = 1.0 + error[0]
         M = 1.0 + error[1] if len(error) > 1 else 1.0
         l = 1.0 + error[2] if len(error) > 2 else 1.0
         model_param = ModelParameter(m=m, M=M, l=l)
-        system = Cartpole(np.zeros(4), model_param=model_param)
+        system = Cartpole(np.array([0.0, 0.0, 0.1, 0.0]), model_param=model_param)
         for i in range(300):
             u = policy(system.state)
             system.step(u)
@@ -122,17 +159,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logger = create_default_logger(Path("/tmp/"), "train", logging.INFO)
+    param_dof = 7
 
     if args.mode == "train":
         np.random.seed(1)
-        env = Environment()
-        param_init = np.random.randn(env.residual_net.dof) * 0.01
-        ls_param = np.array([0.3] * env.residual_net.dof)
+        env = Environment(param_dof)
+        param_init = np.array([0.1, 1.0, 1.0, 1.0, 0.2, 0.3, 0.3])
+        ls_param = np.array([0.1, 0.5, 0.5, 0.5, 0.2, 0.1, 0.1])
         print(f"param_init: {param_init.shape}")
 
         X = []
         Y = []
-        for i in tqdm.tqdm(range(50)):
+        for i in tqdm.tqdm(range(100)):
             e = -np.ones(args.m) * 0.5 + np.random.rand(args.m)
             res = env._rollout(param_init, e)
             Y.append(res)
@@ -149,6 +187,7 @@ if __name__ == "__main__":
                 w = 1.5
                 e = np.random.rand(args.m) * w - 0.5 * w
                 return np.array(e)
+
         else:
 
             def situation_sampler() -> np.ndarray:
@@ -180,8 +219,33 @@ if __name__ == "__main__":
             param_ls_reduction_rate=0.998,
         )
 
+        def is_valid_param(param: np.ndarray) -> bool:
+            (
+                energy_alpha,
+                lqr_q1,
+                lqr_q2,
+                lqr_q3,
+                lqr_r,
+                switch_coditing_theta,
+                switch_coditing_theta_dot,
+            ) = param
+            if energy_alpha < 0.0:
+                return False
+            eps = 0.05
+            if lqr_q1 < eps or lqr_q2 < eps or lqr_q3 < eps or lqr_r < eps:
+                return False
+            if switch_coditing_theta < 0.0 or switch_coditing_theta_dot < 0.0:
+                return False
+            return True
+
         sampler = DistributionGuidedSampler(
-            X, Y, metric, param_init, situation_sampler=situation_sampler, config=config
+            X,
+            Y,
+            metric,
+            param_init,
+            situation_sampler=situation_sampler,
+            config=config,
+            is_valid_param=is_valid_param,
         )
 
         for i in tqdm.tqdm(range(args.n)):
@@ -208,7 +272,7 @@ if __name__ == "__main__":
         plt.plot(sampler_cache.best_volume_history)
         plt.show()
 
-        env = Environment()
+        env = Environment(param_dof)
         param_init = sampler_cache.best_param_history[-1]
         # param_init = sampler_cache.best_param_history[0] * 0.1
         volume = sampler_cache.best_volume_history[-1]
@@ -231,7 +295,7 @@ if __name__ == "__main__":
             plt.plot(es, decision_values, "-")
             plt.show()
         elif args.m == 2:
-            param_init = sampler_cache.best_param_history[0]
+            # param_init = sampler_cache.best_param_history[0]
             X = []
             Y = []
             for i in tqdm.tqdm(range(100)):

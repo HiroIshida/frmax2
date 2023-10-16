@@ -1,21 +1,8 @@
-import argparse
-import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Callable, Optional
+from typing import Callable, List, Optional, Union
 
-import dill
 import matplotlib.pyplot as plt
 import numpy as np
-import torch as th
-import torch.nn as nn
-import tqdm
-from scipy.integrate import odeint, solve_ivp
-
-from frmax2.core import ActiveSamplerConfig, DistributionGuidedSampler, SamplerCache
-from frmax2.metric import CompositeMetric
-from frmax2.utils import create_default_logger
-
 from control import lqr
 
 
@@ -36,7 +23,6 @@ class ModelParameter:
         )
 
 
-
 class Cartpole:
     state: np.ndarray
     model_param: ModelParameter
@@ -50,7 +36,9 @@ class Cartpole:
     def step(self, f: float, dt: float = 0.05):
         x, x_dot, theta, theta_dot = self.state
         m, M, l, g = self.model_param.m, self.model_param.M, self.model_param.l, self.model_param.g
-        x_acc = (f + m * np.sin(theta) * (l * theta_dot ** 2 + g * np.cos(theta))) / (M + m * np.sin(theta) ** 2)
+        x_acc = (f + m * np.sin(theta) * (l * theta_dot**2 + g * np.cos(theta))) / (
+            M + m * np.sin(theta) ** 2
+        )
         theta_acc = -1 * (np.cos(theta) * x_acc + g * np.sin(theta)) / l
         x_dot += x_acc * dt
         theta_dot += theta_acc * dt
@@ -119,17 +107,26 @@ class LQRController:
     model_param: ModelParameter
     A: np.ndarray
     B: np.ndarray
-    q_scale: float
+    q_scale: np.ndarray
     r_scale: float
 
-    def __init__(self, model_param: ModelParameter, q_scale: float = 1.0, r_scale: float = 0.1):
+    def __init__(
+        self,
+        model_param: ModelParameter,
+        q_scale: Union[float, np.ndarray] = 1.0,
+        r_scale: float = 0.1,
+    ):
         m, M, l, g = model_param.m, model_param.M, model_param.l, model_param.g
 
         def x_acc(theta, theta_dot, u) -> float:
-            return (u + m * np.sin(theta) * (l * theta_dot ** 2 + g * np.cos(theta))) / (M + m * np.sin(theta) ** 2)
+            return (u + m * np.sin(theta) * (l * theta_dot**2 + g * np.cos(theta))) / (
+                M + m * np.sin(theta) ** 2
+            )
 
         def theta_acc(theta, theta_dot, u) -> float:
-            x_acc = (u + m * np.sin(theta) * (l * theta_dot ** 2 + g * np.cos(theta))) / (M + m * np.sin(theta) ** 2)
+            x_acc = (u + m * np.sin(theta) * (l * theta_dot**2 + g * np.cos(theta))) / (
+                M + m * np.sin(theta) ** 2
+            )
             theta_acc = -1 * (np.cos(theta) * x_acc + g * np.sin(theta)) / l
             return theta_acc
 
@@ -154,6 +151,9 @@ class LQRController:
         B[:2] = B_theta
         B[2] = b_x
 
+        if isinstance(q_scale, float):
+            q_scale = np.ones(3) * q_scale
+
         self.A = A
         self.B = B
         self.q_scale = q_scale
@@ -161,7 +161,7 @@ class LQRController:
 
     def __call__(self, state: np.ndarray):
         x, x_dot, theta, theta_dot = state
-        Q = np.eye(3) * self.q_scale
+        Q = np.diag(self.q_scale)
         R = np.eye(1) * self.r_scale
         K, _, _ = lqr(self.A, self.B, Q, R)
         target_cand = [-3 * np.pi, -np.pi, np.pi, 3 * np.pi]
@@ -176,11 +176,17 @@ class Controller:
     is_switchable: Callable[[np.ndarray], bool]
     nonlinear_mode: bool
 
-    def __init__(self, model_param: ModelParameter, is_switchable: Optional[Callable[[np.ndarray], bool]] = None):
+    def __init__(
+        self,
+        model_param: ModelParameter,
+        is_switchable: Optional[Callable[[np.ndarray], bool]] = None,
+    ):
         if is_switchable is None:
+
             def tmp(state: np.ndarray) -> bool:
                 x, x_dot, theta, theta_dot = state
                 return abs(np.cos(theta) - (-1)) < 0.3 and abs(theta_dot) < 0.3
+
             is_switchable = tmp
         self.model_param = model_param
         self.nonlinear_controller = EnergyShapingController(model_param)
