@@ -427,8 +427,8 @@ class DistributionGuidedSampler:
 
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
-        logger.debug(f"current best param: {param_center}")
-        logger.info(f"current best volume: {self.compute_sliced_volume(param_center)}")
+        logger.debug(f"current cand best param: {param_center}")
+        logger.debug(f"current cand best volume: {self.compute_sliced_volume(param_center)}")
 
         self.sampler_cache.best_param_history.append(param_center)
         self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
@@ -475,7 +475,8 @@ class DistributionGuidedSampler:
             self.best_param_so_far += self.config.learning_rate * (
                 best_param - self.best_param_so_far
             )
-        # FINISH COPYING
+        logger.info(f"current best param: {self.best_param_so_far}")
+        logger.info(f"current best volume: {self.compute_sliced_volume(self.best_param_so_far)}")
 
     def ask(self) -> Optional[np.ndarray]:
         param_metric = self.metric.metirics[0]
