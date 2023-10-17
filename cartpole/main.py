@@ -162,11 +162,12 @@ if __name__ == "__main__":
     param_dof = 7
 
     file_path = Path(f"./sampler-cache-{args.m}.pkl")
+    param_hand = np.array([0.1, 1.0, 1.0, 1.0, 0.5, 0.3, 0.3])
 
     if args.mode == "train":
         np.random.seed(1)
         env = Environment(param_dof)
-        param_init = np.array([0.1, 1.0, 1.0, 1.0, 0.2, 0.3, 0.3])
+        param_init = param_hand
         ls_param = np.array([0.1, 0.5, 0.5, 0.5, 0.2, 0.1, 0.1])
         print(f"param_init: {param_init.shape}")
 
@@ -181,36 +182,29 @@ if __name__ == "__main__":
         Y = np.array(Y)
         assert sum(Y) > 0
         logger.info(f"initial volume: {np.sum(Y) / len(Y)}")
-        ls_error = np.array([0.05] * args.m)
 
-        if args.m in (1, 2):
+        def situation_sampler() -> np.ndarray:
+            w = 1.5
+            e = np.random.rand(args.m) * w - 0.5 * w
+            return np.array(e)
 
-            def situation_sampler() -> np.ndarray:
-                w = 1.5
-                e = np.random.rand(args.m) * w - 0.5 * w
-                return np.array(e)
-
-        else:
-
-            def situation_sampler() -> np.ndarray:
-                w = 0.6
-                e = np.random.rand(args.m) * w - 0.5 * w
-                return np.array(e)
-
-        metric = CompositeMetric.from_ls_list([ls_param, ls_error])
         if args.m == 1:
             n_mc_integral = 80
             learning_rate = 0.2
             r_exploration = 2.0
+            ls_error = np.array([0.02] * args.m)
         elif args.m == 2:
             n_mc_integral = 120
             learning_rate = 0.05
             r_exploration = 2.0
+            ls_error = np.array([0.05] * args.m)
         else:
             n_mc_integral = 300
             learning_rate = 0.05
             # r_exploration = 1.2
             r_exploration = 2.0
+            ls_error = np.array([0.05] * args.m)
+        metric = CompositeMetric.from_ls_list([ls_param, ls_error])
         config = ActiveSamplerConfig(
             n_mc_param_search=10,
             c_svm=1000,
@@ -275,57 +269,45 @@ if __name__ == "__main__":
 
         env = Environment(param_dof)
         param_init = sampler_cache.best_param_history[-1]
-        # param_init = sampler_cache.best_param_history[0] * 0.1
         volume = sampler_cache.best_volume_history[-1]
         print(f"expected volume: {volume}")
 
+        # benchmark
+        e_list = []
+        bools = []
+        bools_hand = []
+        for i in tqdm.tqdm(range(100)):
+            e = sampler.situation_sampler()
+            res = env._rollout(param_init, e)
+            res_hand = env._rollout(param_hand, e)
+            e_list.append(e)
+            bools.append(res)
+            bools_hand.append(res_hand)
+        print(f"hand volume: {np.sum(bools_hand) / len(bools_hand)}")
+        print(f"actual volume: {np.sum(bools) / len(bools)}")
+
         if args.m == 1:
-            e_list = []
-            bools = []
-            for i in tqdm.tqdm(range(100)):
-                e = sampler.situation_sampler()
-                res = env._rollout(param_init, e)
-                e_list.append(e)
-                bools.append(res)
-            print(f"actual volume: {np.sum(bools) / len(bools)}")
-            plt.plot(e_list, bools, "o")
             es = np.linspace(min(e_list), max(e_list), 100)
             decision_values = [
                 sampler.fslset.func(np.array([np.hstack([param_init, e])])) for e in es
             ]
-            plt.plot(es, decision_values, "-")
+            fig, (ax1, ax2) = plt.subplots(2, 1)
+            ax1.plot(e_list, bools, "o")
+            ax1.plot(es, decision_values, "-")
+            ax2.plot(e_list, bools_hand, "o")
             plt.show()
         elif args.m == 2:
-            # param_init = sampler_cache.best_param_history[0]
-            X = []
-            Y = []
-            for i in tqdm.tqdm(range(100)):
-                e = sampler.situation_sampler()
-                res = env._rollout(param_init, e)
-                Y.append(res)
-                X.append(np.hstack([param_init, e]))
-            X = np.array(X)
-            Y = np.array(Y)
-            volume = np.sum(Y) / len(Y)
-            print(f"actual volume: {volume}")
-            # scatter plot positive
-            fig, ax = plt.subplots()
-            sampler.fslset.show_sliced(param_init, list(range(len(param_init))), 50, (fig, ax))
-            ax.scatter(X[Y, -1], X[Y, -2], c="blue")
-            ax.scatter(X[~Y, -1], X[~Y, -2], c="red")
+            fig, (ax1, ax2) = plt.subplots(2, 1)
+            E = np.array(e_list)
+            bools = np.array(bools)
+            bools_hand = np.array(bools_hand)
+            ax1.scatter(E[bools, 1], E[bools, 0], c="blue")
+            ax1.scatter(E[~bools, 1], E[~bools, 0], c="red")
+            sampler.fslset.show_sliced(param_init, list(range(len(param_init))), 50, (fig, ax1))
+            ax2.scatter(E[bools_hand, 1], E[bools_hand, 0], c="blue")
+            ax2.scatter(E[~bools_hand, 1], E[~bools_hand, 0], c="red")
             plt.show()
         elif args.m == 3:
-            param_init = sampler_cache.best_param_history[0]
-            X = []
-            Y = []
-            for i in tqdm.tqdm(range(300)):
-                e = sampler.situation_sampler()
-                res = env._rollout(param_init, e)
-                Y.append(res)
-                X.append(np.hstack([param_init, e]))
-            X = np.array(X)
-            Y = np.array(Y)
-            volume = np.sum(Y) / len(Y)
-            print(f"actual volume: {volume}")
+            print("do nothing")
         else:
             assert False
