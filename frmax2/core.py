@@ -511,3 +511,37 @@ class DistributionGuidedSampler:
 
         x_best = max(X_cand, key=uncertainty)
         return x_best
+
+    def ask_additional(self) -> np.ndarray:
+        param_here = self.best_param_so_far
+
+        sliced_points = []
+        while len(sliced_points) < 100:
+            e = self.situation_sampler()
+            pt = np.hstack([param_here, e])
+            value = self.fslset.func(np.array([pt]))
+            inside_svm_margin = value > 0 and value < 1.0
+            if inside_svm_margin:
+                sliced_points.append(e)
+        sliced_points = np.array(sliced_points)
+
+        # START COPYING FROM ActiveSamplerBase >>
+        assert len(sliced_points) > 0
+        logger.debug(f"slice points: {sliced_points}")
+        if self.count_additional == 0:
+            e_new = sliced_points[0]  # because we cannot compare
+        else:
+            e_dim = sliced_points.shape[1]
+            E_additional_so_far = self.X[-self.count_additional :, -e_dim:]
+            e_metric = self.metric.metirics[1]
+            uncertainty_max = -np.inf
+            e_new = None
+            for e in sliced_points:
+                uncertainty = np.min(e_metric(e, E_additional_so_far))
+                if uncertainty > uncertainty_max:
+                    uncertainty_max = uncertainty
+                    e_new = e
+            assert e_new is not None and len(e_new) == e_dim
+        self.count_additional += 1
+        # << FINISH COPYING FROM ActiveSamplerBase
+        return np.hstack([param_here, e_new])
