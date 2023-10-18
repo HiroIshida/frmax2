@@ -16,7 +16,7 @@ from common import (
     ModelParameter,
 )
 
-from frmax2.core import ActiveSamplerConfig, DistributionGuidedSampler, SamplerCache
+from frmax2.core import DGSamplerConfig, DistributionGuidedSampler, SamplerCache
 from frmax2.metric import CompositeMetric
 from frmax2.utils import create_default_logger
 
@@ -111,15 +111,12 @@ class ParameterizedController:
 
 
 class Environment:
-    residual_net: ResidualPolicyNet
     param_dof: int
 
     def __init__(self, param_dof: int):
-        self.residual_net = ResidualPolicyNet()
         self.param_dof = param_dof
 
     def rollout(self, x: np.ndarray) -> bool:
-        # param_dof = self.residual_net.dof
         param_dof = self.param_dof
         param = x[:param_dof]
         error = x[param_dof:]
@@ -165,6 +162,29 @@ if __name__ == "__main__":
     param_hand = np.array([0.1, 1.0, 1.0, 1.0, 0.5, 0.3, 0.3])
 
     if args.mode == "train":
+        if args.m == 1:
+            n_mc_integral = 80
+            learning_rate = 0.2
+            r_exploration = 2.0
+            ls_error = np.array([0.02] * args.m)
+            n_init_sample = 20
+            n_add_sample = 20
+        elif args.m == 2:
+            n_mc_integral = 120
+            learning_rate = 0.05
+            r_exploration = 2.0
+            ls_error = np.array([0.03] * args.m)
+            n_init_sample = 40
+            n_add_sample = 40
+        else:
+            n_mc_integral = 300
+            learning_rate = 0.05
+            # r_exploration = 1.2
+            r_exploration = 2.0
+            ls_error = np.array([0.05] * args.m)
+            n_init_sample = 60
+            n_add_sample = 60
+
         np.random.seed(1)
         env = Environment(param_dof)
         param_init = param_hand
@@ -173,7 +193,7 @@ if __name__ == "__main__":
 
         X = []
         Y = []
-        for i in tqdm.tqdm(range(100)):
+        for i in tqdm.tqdm(range(n_init_sample)):
             e = -np.ones(args.m) * 0.5 + np.random.rand(args.m)
             res = env._rollout(param_init, e)
             Y.append(res)
@@ -188,26 +208,10 @@ if __name__ == "__main__":
             e = np.random.rand(args.m) * w - 0.5 * w
             return np.array(e)
 
-        if args.m == 1:
-            n_mc_integral = 80
-            learning_rate = 0.2
-            r_exploration = 2.0
-            ls_error = np.array([0.02] * args.m)
-        elif args.m == 2:
-            n_mc_integral = 120
-            learning_rate = 0.05
-            r_exploration = 2.0
-            ls_error = np.array([0.05] * args.m)
-        else:
-            n_mc_integral = 300
-            learning_rate = 0.05
-            # r_exploration = 1.2
-            r_exploration = 2.0
-            ls_error = np.array([0.05] * args.m)
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
-        config = ActiveSamplerConfig(
+        config = DGSamplerConfig(
             n_mc_param_search=10,
-            c_svm=1000,
+            c_svm=1000000,
             integration_method="mc",
             n_mc_integral=n_mc_integral,
             r_exploration=r_exploration,
@@ -246,39 +250,39 @@ if __name__ == "__main__":
 
         for i in tqdm.tqdm(range(args.n)):
             sampler.update_center()
-            while True:
-                x = sampler.ask()
-                if x is not None:
-                    break
+            x = sampler.ask()
             sampler.tell(x, env.rollout(x))
-            if i % 10 == 0:
+            if i % 50 == 0:
                 # save sampler
+                param_opt = sampler.optimize(300)
                 with file_path.open(mode="wb") as f:
-                    dill.dump(sampler, f)
+                    dill.dump((sampler, param_opt), f)
+
+        param_opt = sampler.optimize(300)
+
+        for i in range(n_add_sample):
+            x = sampler.ask_additional(param_opt)
+            sampler.tell(x, env.rollout(x))
+        with file_path.open(mode="wb") as f:
+            dill.dump((sampler, param_opt), f)
+
     elif args.mode == "test":
         # load sampler
         with file_path.open(mode="rb") as f:
-            sampler: DistributionGuidedSampler = dill.load(f)
+            sampler, param_opt = dill.load(f)
             sampler_cache: SamplerCache = sampler.sampler_cache
-        import matplotlib.pyplot as plt
-
-        print(sampler_cache.best_volume_history)
-        print(sampler_cache.best_param_history[-1])
         plt.plot(sampler_cache.best_volume_history)
         plt.show()
 
         env = Environment(param_dof)
-        param_init = sampler_cache.best_param_history[-1]
-        volume = sampler_cache.best_volume_history[-1]
-        print(f"expected volume: {volume}")
 
         # benchmark
         e_list = []
         bools = []
         bools_hand = []
-        for i in tqdm.tqdm(range(100)):
+        for i in tqdm.tqdm(range(300)):
             e = sampler.situation_sampler()
-            res = env._rollout(param_init, e)
+            res = env._rollout(param_opt, e)
             res_hand = env._rollout(param_hand, e)
             e_list.append(e)
             bools.append(res)
@@ -289,7 +293,7 @@ if __name__ == "__main__":
         if args.m == 1:
             es = np.linspace(min(e_list), max(e_list), 100)
             decision_values = [
-                sampler.fslset.func(np.array([np.hstack([param_init, e])])) for e in es
+                sampler.fslset.func(np.array([np.hstack([param_opt, e])])) for e in es
             ]
             fig, (ax1, ax2) = plt.subplots(2, 1)
             ax1.plot(e_list, bools, "o")
@@ -303,7 +307,7 @@ if __name__ == "__main__":
             bools_hand = np.array(bools_hand)
             ax1.scatter(E[bools, 1], E[bools, 0], c="blue")
             ax1.scatter(E[~bools, 1], E[~bools, 0], c="red")
-            sampler.fslset.show_sliced(param_init, list(range(len(param_init))), 50, (fig, ax1))
+            sampler.fslset.show_sliced(param_opt, list(range(len(param_opt))), 50, (fig, ax1))
             ax2.scatter(E[bools_hand, 1], E[bools_hand, 0], c="blue")
             ax2.scatter(E[~bools_hand, 1], E[~bools_hand, 0], c="red")
             plt.show()
