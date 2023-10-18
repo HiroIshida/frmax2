@@ -310,11 +310,17 @@ class HolllessActiveSampler(ActiveSamplerBase):
         return self.config.sample_error_method != "mc-inside"
 
 
+@dataclass
+class DGSamplerConfig(ActiveSamplerConfig):
+    n_mc_uncertainty_search: int = 100
+    epsilon_exploration: float = 0.1
+
+
 class DistributionGuidedSampler:
     fslset: SuperlevelSet
     metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
-    config: ActiveSamplerConfig
+    config: DGSamplerConfig
     best_param_so_far: np.ndarray
     X: np.ndarray
     Y: np.ndarray
@@ -331,9 +337,10 @@ class DistributionGuidedSampler:
         metric: CompositeMetric,
         param_init: np.ndarray,
         situation_sampler: Callable[[], np.ndarray],
-        config: ActiveSamplerConfig = ActiveSamplerConfig(),
+        config: DGSamplerConfig = DGSamplerConfig(),
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
     ):
+        assert isinstance(config, DGSamplerConfig)
         c_svm_current = config.c_svm
         slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
         self.fslset = slset
@@ -481,30 +488,26 @@ class DistributionGuidedSampler:
     def ask(self) -> Optional[np.ndarray]:
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
-        do_exploitition = np.random.rand() < 0.6
+        # do_exploitition = np.random.rand() < 0.6
+        do_exploitition = np.random.rand() > self.config.epsilon_exploration
 
-        params = []
-        while len(params) < 10:
-            rand_param = param_metric.generate_random_inball(
-                param_center, self.config.n_mc_param_search, self.config.r_exploration
-            )[0]
-            if self.is_valid_param(rand_param):
-                params.append(rand_param)
+        N_batch = 200
+        X_cand = []
+        while len(X_cand) < self.config.n_mc_uncertainty_search:
+            rand_params = param_metric.generate_random_inball(
+                param_center, N_batch, self.config.r_exploration
+            )
+            rand_params_filtered = list(filter(self.is_valid_param, rand_params))
+            X_cand_cand = [np.hstack([x, self.situation_sampler()]) for x in rand_params_filtered]
+            values = self.fslset.func(np.array(X_cand_cand))
+            inside_svm_margin = np.logical_and(values > 0, values < 1.0)
+            for x, inside in zip(X_cand_cand, inside_svm_margin):
+                if (not do_exploitition) or inside:
+                    X_cand.append(x)
+        X_cand = np.array(X_cand)[: self.config.n_mc_uncertainty_search]
 
-        x_uncertainty_pairs = []
-        for param in params:
-            for _ in range(10):
-                situation = self.situation_sampler()
-                x = np.hstack([param, situation])
-                uncertainty = np.min(self.metric(x, self.X))
-                if do_exploitition:
-                    value = self.fslset.func(np.array([x]))[0]
-                    inside_svm_margin = value > 0 and value < 1.0
-                    # inside_svm_margin = np.abs(value) < 1.0
-                    if not inside_svm_margin:
-                        continue
-                x_uncertainty_pairs.append((x, uncertainty))
-        if len(x_uncertainty_pairs) == 0:
-            return None
-        x_uncertainty_pairs.sort(key=lambda x: -x[1])
-        return x_uncertainty_pairs[0][0]
+        def uncertainty(x: np.ndarray) -> float:
+            return np.min(self.metric(x, self.X))
+
+        x_best = max(X_cand, key=uncertainty)
+        return x_best
