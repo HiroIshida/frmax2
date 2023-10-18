@@ -512,9 +512,17 @@ class DistributionGuidedSampler:
         x_best = max(X_cand, key=uncertainty)
         return x_best
 
-    def ask_additional(self) -> np.ndarray:
-        param_here = self.best_param_so_far
+    def optimize(self, n_search: int, r_search: float = 0.5) -> None:
+        center = self.best_param_so_far
+        param_metric = self.metric.metirics[0]
+        rand_params = param_metric.generate_random_inball(center, n_search, r_search)
+        rand_params_filtered = list(filter(self.is_valid_param, rand_params))
+        volumes = self.compute_sliced_volume_batch(rand_params_filtered)
+        idx_max_volume = np.argmax(volumes)
+        best_param_so_far = rand_params_filtered[idx_max_volume]
+        return best_param_so_far
 
+    def ask_additional(self, param_here: np.ndarray) -> np.ndarray:
         sliced_points = []
         while len(sliced_points) < 100:
             e = self.situation_sampler()
