@@ -201,3 +201,70 @@ class Controller:
             return self.nonlinear_controller(state)
         else:
             return self.linear_controller(state)[0]
+
+
+class ParameterizedController:
+    def __init__(self, param: np.ndarray):
+        energy_alpha = param[0]
+        lqr_q = np.array(param[1:4])
+        lqr_r = param[4]
+        switch_coditing_theta = param[5]
+        switch_coditing_theta_dot = param[6]
+        nonlinear = EnergyShapingController(ModelParameter(), energy_alpha)
+        linear = LQRController(ModelParameter(), lqr_q, lqr_r)
+
+        def is_switchable(state: np.ndarray) -> bool:
+            x, x_dot, theta, theta_dot = state
+            return (
+                abs(np.cos(theta) - (-1)) < switch_coditing_theta
+                and abs(theta_dot) < switch_coditing_theta_dot
+            )
+
+        self.is_switchable = is_switchable
+        self.nonlinear_mode = True
+        self.nonlinear = nonlinear
+        self.linear = linear
+
+    def __call__(self, state: np.ndarray) -> float:
+        if self.is_switchable(state):
+            self.nonlinear_mode = False
+        if self.nonlinear_mode:
+            return self.nonlinear(state)
+        else:
+            return self.linear(state)[0]
+
+
+class Environment:
+    param_dof: int
+
+    def __init__(self, param_dof: int):
+        self.param_dof = param_dof
+
+    def rollout(self, x: np.ndarray) -> bool:
+        param_dof = self.param_dof
+        param = x[:param_dof]
+        error = x[param_dof:]
+        res = self._rollout(param, error)
+        print(f"param: {param}, error: {error}, res: {res}")
+        return res
+
+    def _rollout(self, param: np.ndarray, error: np.ndarray) -> bool:
+        # self.residual_net.set_parameter(param)
+        # base_controller = Controller(ModelParameter())
+        # policy = Policy(base_controller, self.residual_net)
+        policy = ParameterizedController(param)
+        assert len(error) <= 3
+        m = 1.0 + error[0]
+        M = 1.0 + error[1] if len(error) > 1 else 1.0
+        l = 1.0 + error[2] if len(error) > 2 else 1.0
+        model_param = ModelParameter(m=m, M=M, l=l)
+        system = Cartpole(np.array([0.0, 0.0, 0.1, 0.0]), model_param=model_param)
+        for i in range(300):
+            u = policy(system.state)
+            system.step(u)
+            x, _, _, _ = system.state
+            if abs(x) > 10.0:
+                return False
+            if system.is_static():
+                return True
+        return False
