@@ -1,8 +1,10 @@
 import argparse
 import logging
+from hashlib import md5
 from pathlib import Path
 
 import dill
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
@@ -15,8 +17,8 @@ from frmax2.utils import create_default_logger
 if __name__ == "__main__":
     # argparse to select mode
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, default="train")
-    parser.add_argument("-n", type=int, default=300)
+    parser.add_argument("--mode", type=str, default="test")
+    parser.add_argument("-n", type=int)
     parser.add_argument("-m", type=int, default=1, help="number of error dim")
 
     args = parser.parse_args()
@@ -28,6 +30,8 @@ if __name__ == "__main__":
     param_hand = np.array([0.1, 1.0, 1.0, 1.0, 0.5, 0.3, 0.3])
 
     if args.mode == "train":
+        if args.n is None:
+            args.n = 1500
         if args.m == 1:
             n_mc_integral = 80
             learning_rate = 0.2
@@ -137,47 +141,140 @@ if __name__ == "__main__":
         with file_path.open(mode="rb") as f:
             sampler, param_opt = dill.load(f)
             sampler_cache: SamplerCache = sampler.sampler_cache
-        plt.plot(sampler_cache.best_volume_history)
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(sampler_cache.best_volume_history, "o-", lw=0.3, ms=2)
+        ax.set_xlabel("iteration")
+        ax.set_ylabel("weightd volume estimate")
+        size = fig.get_size_inches()
+        size[0] = size[0] * 0.5
+        size[1] = size[0] * 1.2
+        fig.set_size_inches(*size)
+        # adjust bottom and left
+        plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
+        plt.grid()
+        fig.savefig(f"./volume-history-{args.m}.png", dpi=300)
         plt.show()
-
+        # save fig
         env = Environment(param_dof)
 
-        # benchmark
-        e_list = []
-        bools = []
-        bools_hand = []
-        for i in tqdm.tqdm(range(300)):
-            e = sampler.situation_sampler()
-            res = env._rollout(param_opt, e)
-            res_hand = env._rollout(param_hand, e)
-            e_list.append(e)
-            bools.append(res)
-            bools_hand.append(res_hand)
+        # get hashvalue of file_path contents
+        hash_valie = md5(file_path.read_bytes()).hexdigest()
+        test_cache_path = Path(f"./test-cache-{hash_valie}-{args.n}.pkl")
+
+        if test_cache_path.exists():
+            with test_cache_path.open(mode="rb") as f:
+                e_list, bools, bools_hand = dill.load(f)
+        else:
+            # benchmark
+            # create e points on regular grids
+            b_min = -0.75
+            b_max = +0.75
+            if args.m == 1:
+                if args.n is None:
+                    args.n = 50
+                e_list = np.linspace(b_min, b_max, args.n).reshape(-1, 1)
+            elif args.m == 2:
+                if args.n is None:
+                    args.n = 20
+                axis_list = [np.linspace(b_min, b_max, args.n)] * 2
+                e1_grid, e2_grid = np.meshgrid(*axis_list)
+                e_list = np.hstack([e1_grid.reshape(-1, 1), e2_grid.reshape(-1, 1)])
+            elif args.m == 3:
+                if args.n is None:
+                    args.n = 10
+                axis_list = [np.linspace(b_min, b_max, args.n)] * 3
+                e1_grid, e2_grid, e3_grid = np.meshgrid(*axis_list)
+                e_list = np.hstack(
+                    [e1_grid.reshape(-1, 1), e2_grid.reshape(-1, 1), e3_grid.reshape(-1, 1)]
+                )
+            else:
+                assert False
+
+            bools = []
+            bools_hand = []
+            for e in tqdm.tqdm(e_list):
+                res = env._rollout(param_opt, e)
+                res_hand = env._rollout(param_hand, e)
+                bools.append(res)
+                bools_hand.append(res_hand)
+            bools = np.array(bools)
+            bools_hand = np.array(bools_hand)
+            with test_cache_path.open(mode="wb") as f:
+                dill.dump((e_list, bools, bools_hand), f)
         print(f"hand volume: {np.sum(bools_hand) / len(bools_hand)}")
         print(f"actual volume: {np.sum(bools) / len(bools)}")
 
         if args.m == 1:
-            es = np.linspace(min(e_list), max(e_list), 100)
+            es = np.linspace(min(e_list), max(e_list), 3000)
             decision_values = [
                 sampler.fslset.func(np.array([np.hstack([param_opt, e])])) for e in es
             ]
+            cross_points = es[np.abs(decision_values) < 0.1]
+
             fig, (ax1, ax2) = plt.subplots(2, 1)
-            ax1.plot(e_list, bools, "o")
-            ax1.plot(es, decision_values, "-")
-            ax2.plot(e_list, bools_hand, "o")
+            ax1.plot(e_list[bools_hand], 10 * np.ones_like(e_list[bools_hand]), "o", c="blue", ms=2)
+            ax1.plot(
+                e_list[~bools_hand], -10 * np.ones_like(e_list[~bools_hand]), "o", c="red", ms=2
+            )
+            ax1.axhline(y=0.0, color="k", linestyle="-")
+
+            ax2.plot(e_list[bools], 10 * np.ones_like(e_list[bools]), "o", c="blue", ms=2)
+            ax2.plot(e_list[~bools], -10 * np.ones_like(e_list[~bools]), "o", c="red", ms=2)
+            ax2.axhline(y=0.0, color="k", linestyle="-")
+            ax2.plot(es, decision_values, "-", lw=2.0, c="gray")
+            # show cross points by vertical lines
+            for x in cross_points:
+                ax2.axvline(x=x, color="k", linestyle="--")
+
+            # save fig
+            size = fig.get_size_inches()
+            size[0] = size[0] * 1.0
+            size[1] = size[0] * 0.8
+            fig.set_size_inches(*size)
+            plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
+            plt.grid()
+            fig.savefig(f"./comparison-{args.m}.png", dpi=300)
             plt.show()
         elif args.m == 2:
-            fig, (ax1, ax2) = plt.subplots(2, 1)
+            fig, (ax1, ax2) = plt.subplots(1, 2)
             E = np.array(e_list)
             bools = np.array(bools)
             bools_hand = np.array(bools_hand)
-            ax1.scatter(E[bools, 1], E[bools, 0], c="blue")
-            ax1.scatter(E[~bools, 1], E[~bools, 0], c="red")
-            sampler.fslset.show_sliced(param_opt, list(range(len(param_opt))), 50, (fig, ax1))
-            ax2.scatter(E[bools_hand, 1], E[bools_hand, 0], c="blue")
-            ax2.scatter(E[~bools_hand, 1], E[~bools_hand, 0], c="red")
+
+            s = 5
+            ax1.scatter(E[bools_hand, 1], E[bools_hand, 0], c="blue", s=s)
+            ax1.scatter(E[~bools_hand, 1], E[~bools_hand, 0], c="red", s=s)
+
+            cmap = cm.get_cmap("coolwarm").reversed()
+            sampler.fslset.show_sliced(
+                param_opt,
+                list(range(len(param_opt))),
+                50,
+                (fig, ax2),
+                rich=True,
+                cmap=cmap,
+                levels=20,
+            )
+            ax2.scatter(E[bools, 1], E[bools, 0], c="blue", s=s)
+            ax2.scatter(E[~bools, 1], E[~bools, 0], c="red", s=s)
+
+            for ax in (ax1, ax2):
+                ax.set_aspect("equal")
+                ax.set_xlim(-0.8, 0.8)
+                ax.set_ylim(-0.8, 0.8)
+            # remove y memori of ax2
+            ax2.set_yticks([])
+            # save fig
+            size = fig.get_size_inches()
+            size[0] = size[0] * 1.0
+            size[1] = size[0] * 0.5
+            fig.set_size_inches(*size)
+            plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
+            fig.savefig(f"./comparison-{args.m}.png", dpi=300)
             plt.show()
         elif args.m == 3:
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection="3d")
             print("do nothing")
         else:
             assert False
