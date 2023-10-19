@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from math import factorial
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 from skimage import measure
@@ -157,7 +157,15 @@ class SuperlevelSet:
         b_max = np.max(co_points, axis=0)
         return b_max - b_min
 
-    def show_sliced(self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int, fax) -> None:
+    def show_sliced(
+        self,
+        point_slice: np.ndarray,
+        axes_slice: List[int],
+        n_grid: int,
+        fax: Tuple,
+        rich: bool = False,
+        **kwargs,
+    ) -> None:
         assert len(point_slice) == len(axes_slice)
         axes_co = get_co_axes(self.dim, axes_slice)
         assert len(axes_co) == 2
@@ -166,6 +174,8 @@ class SuperlevelSet:
         data = values.reshape(n_grid, n_grid)
         X, Y = self.create_meshgrids(point_slice, axes_slice, n_grid)
         fig, ax = fax
+        if rich:
+            ax.contourf(X, Y, data, **kwargs)
         ax.contour(X, Y, data, levels=[0.0])
 
     def create_meshgrids(
