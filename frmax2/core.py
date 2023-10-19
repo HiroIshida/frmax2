@@ -1,3 +1,4 @@
+import copy
 import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
@@ -177,7 +178,7 @@ class ActiveSamplerBase(ABC):
         logger.debug(f"current best param: {param_center}")
         logger.info(f"current best volume: {self.compute_sliced_volume(param_center)}")
 
-        self.sampler_cache.best_param_history.append(param_center)
+        self.sampler_cache.best_param_history.append(copy.deepcopy(param_center))
         self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
 
         trial_count = 0
@@ -482,6 +483,8 @@ class DistributionGuidedSampler:
         best_volume_guess = self.compute_sliced_volume(self.best_param_so_far)
         logger.info(f"current best param: {self.best_param_so_far}")
         logger.info(f"current best volume: {best_volume_guess}")
+        self.sampler_cache.best_param_history.append(copy.deepcopy(self.best_param_so_far))
+        self.sampler_cache.best_volume_history.append(best_volume_guess)
 
     def ask(self) -> Optional[np.ndarray]:
         param_metric = self.metric.metirics[0]
