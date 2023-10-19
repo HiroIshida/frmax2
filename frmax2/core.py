@@ -349,7 +349,10 @@ class DistributionGuidedSampler:
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
-            is_valid_param = lambda x: True
+
+            def is_valid_param(x: np.ndarray) -> bool:
+                return True
+
         self.is_valid_param = is_valid_param
         self.X = X
         self.Y = Y
