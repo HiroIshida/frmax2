@@ -423,6 +423,8 @@ class DistributionGuidedSampler:
         # perfectly copied from ActiveSamplerBase
 
         def sample_until_valid(r_param: float) -> np.ndarray:
+            param_metric = self.metric.metirics[0]
+            param_center = self.best_param_so_far
             while True:
                 rand_params = param_metric.generate_random_inball(
                     param_center, self.config.n_mc_param_search, r_param
@@ -431,14 +433,6 @@ class DistributionGuidedSampler:
                 if len(filtered) > 0:
                     return np.array(filtered)
                 logger.debug("sample from ball again as no samples satisfies constraint")
-
-        param_metric = self.metric.metirics[0]
-        param_center = self.best_param_so_far
-        logger.debug(f"current cand best param: {param_center}")
-        logger.debug(f"current cand best volume: {self.compute_sliced_volume(param_center)}")
-
-        self.sampler_cache.best_param_history.append(param_center)
-        self.sampler_cache.best_volume_history.append(self.compute_sliced_volume(param_center))
 
         trial_count = 0
         r = self.config.r_exploration
@@ -482,8 +476,9 @@ class DistributionGuidedSampler:
             self.best_param_so_far += self.config.learning_rate * (
                 best_param - self.best_param_so_far
             )
+        best_volume_guess = self.compute_sliced_volume(self.best_param_so_far)
         logger.info(f"current best param: {self.best_param_so_far}")
-        logger.info(f"current best volume: {self.compute_sliced_volume(self.best_param_so_far)}")
+        logger.info(f"current best volume: {best_volume_guess}")
 
     def ask(self) -> Optional[np.ndarray]:
         param_metric = self.metric.metirics[0]
