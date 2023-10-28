@@ -32,6 +32,12 @@ class ActiveSamplerConfig:
     box_cut: bool = False
 
 
+@dataclass
+class DGSamplerConfig(ActiveSamplerConfig):
+    n_mc_uncertainty_search: int = 100
+    epsilon_exploration: float = 0.1
+
+
 class SamplerCache:
     best_param_history: List[np.ndarray]
     best_volume_history: List[float]
@@ -45,7 +51,7 @@ class ActiveSamplerBase(ABC):
     fslset: SuperlevelSet
     metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
-    config: ActiveSamplerConfig
+    config: DGSamplerConfig
     best_param_so_far: np.ndarray
     X: np.ndarray
     Y: np.ndarray
@@ -53,6 +59,7 @@ class ActiveSamplerBase(ABC):
     sampler_cache: SamplerCache
     count_additional: int
     c_svm_current: float
+    situation_sampler: Callable[[], np.ndarray]
 
     def __init__(
         self,
@@ -62,6 +69,7 @@ class ActiveSamplerBase(ABC):
         param_init: np.ndarray,
         config: ActiveSamplerConfig = ActiveSamplerConfig(),
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
+        situation_sampler: Optional[Callable[[], np.ndarray]] = None,
     ):
         c_svm_current = config.c_svm
         slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
@@ -77,6 +85,29 @@ class ActiveSamplerBase(ABC):
         self.sampler_cache = SamplerCache()
         self.c_svm_current = c_svm_current
         self.count_additional = 0
+        self.situation_sampler = situation_sampler
+
+    @abstractmethod
+    def ask(self) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def tell(self, x: np.ndarray, y: bool) -> None:
+        pass
+
+
+class HolllessActiveSampler(ActiveSamplerBase):
+    fslset: SuperlevelSet
+    metric: CompositeMetric
+    is_valid_param: Callable[[np.ndarray], bool]
+    config: ActiveSamplerConfig
+    best_param_so_far: np.ndarray
+    X: np.ndarray
+    Y: np.ndarray
+    axes_param: List[int]
+    sampler_cache: SamplerCache
+    count_additional: int
+    c_svm_current: float
 
     @staticmethod
     def _compute_sliced_volume_inner(
@@ -147,14 +178,6 @@ class ActiveSamplerBase(ABC):
             )
         else:
             assert False
-
-    @abstractmethod
-    def update_metric(self) -> None:
-        ...
-
-    @abstractmethod
-    def check_config_compat(self) -> bool:
-        ...
 
     @property
     def dim(self) -> int:
@@ -281,8 +304,6 @@ class ActiveSamplerBase(ABC):
             X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
         )
 
-
-class HolllessActiveSampler(ActiveSamplerBase):
     def update_metric(self) -> None:
         logger.debug("update non-parameter-side metric")
 
@@ -311,57 +332,7 @@ class HolllessActiveSampler(ActiveSamplerBase):
         return self.config.sample_error_method != "mc-inside"
 
 
-@dataclass
-class DGSamplerConfig(ActiveSamplerConfig):
-    n_mc_uncertainty_search: int = 100
-    epsilon_exploration: float = 0.1
-
-
-class DistributionGuidedSampler:
-    fslset: SuperlevelSet
-    metric: CompositeMetric
-    is_valid_param: Callable[[np.ndarray], bool]
-    config: DGSamplerConfig
-    best_param_so_far: np.ndarray
-    X: np.ndarray
-    Y: np.ndarray
-    axes_param: List[int]
-    sampler_cache: SamplerCache
-    count_additional: int
-    c_svm_current: float
-    situation_sampler: Callable[[], np.ndarray]
-
-    def __init__(
-        self,
-        X: np.ndarray,  # float
-        Y: np.ndarray,  # bool
-        metric: CompositeMetric,
-        param_init: np.ndarray,
-        situation_sampler: Callable[[], np.ndarray],
-        config: DGSamplerConfig = DGSamplerConfig(),
-        is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
-    ):
-        assert isinstance(config, DGSamplerConfig)
-        c_svm_current = config.c_svm
-        slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
-        self.fslset = slset
-        self.situation_sampler = situation_sampler
-        self.metric = metric
-        self.config = config
-        self.best_param_so_far = param_init
-        if is_valid_param is None:
-
-            def is_valid_param(x: np.ndarray) -> bool:
-                return True
-
-        self.is_valid_param = is_valid_param
-        self.X = X
-        self.Y = Y
-        self.axes_param = list(range(len(param_init)))
-        self.sampler_cache = SamplerCache()
-        self.c_svm_current = c_svm_current
-        self.count_additional = 0
-
+class DistributionGuidedSampler(ActiveSamplerBase):
     @property
     def dim(self) -> int:
         # perfectly copied from ActiveSamplerBase
