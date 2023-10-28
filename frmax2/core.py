@@ -3,7 +3,7 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Optional, Tuple
+from typing import Callable, Generic, List, Literal, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 
@@ -11,6 +11,9 @@ from frmax2.metric import CompositeMetric, Metric
 from frmax2.region import SuperlevelSet, get_co_axes
 
 logger = logging.getLogger(__name__)
+
+ActiveSamplerConfigT = TypeVar("ActiveSamplerConfigT", bound="ActiveSamplerConfig")
+SituationSamplerT = TypeVar("SituationSamplerT", bound=Union[Callable[[], np.ndarray], None])
 
 
 @dataclass
@@ -47,11 +50,11 @@ class SamplerCache:
         self.best_volume_history = []
 
 
-class ActiveSamplerBase(ABC):
+class ActiveSamplerBase(ABC, Generic[ActiveSamplerConfigT, SituationSamplerT]):
     fslset: SuperlevelSet
     metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
-    config: DGSamplerConfig
+    config: ActiveSamplerConfigT
     best_param_so_far: np.ndarray
     X: np.ndarray
     Y: np.ndarray
@@ -59,7 +62,7 @@ class ActiveSamplerBase(ABC):
     sampler_cache: SamplerCache
     count_additional: int
     c_svm_current: float
-    situation_sampler: Callable[[], np.ndarray]
+    situation_sampler: SituationSamplerT
 
     def __init__(
         self,
@@ -67,9 +70,9 @@ class ActiveSamplerBase(ABC):
         Y: np.ndarray,  # bool
         metric: CompositeMetric,
         param_init: np.ndarray,
-        config: ActiveSamplerConfig = ActiveSamplerConfig(),
+        config: ActiveSamplerConfigT,
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
-        situation_sampler: Optional[Callable[[], np.ndarray]] = None,
+        situation_sampler: SituationSamplerT = None,
     ):
         c_svm_current = config.c_svm
         slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
@@ -96,7 +99,7 @@ class ActiveSamplerBase(ABC):
         pass
 
 
-class HolllessActiveSampler(ActiveSamplerBase):
+class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
     fslset: SuperlevelSet
     metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
@@ -332,7 +335,7 @@ class HolllessActiveSampler(ActiveSamplerBase):
         return self.config.sample_error_method != "mc-inside"
 
 
-class DistributionGuidedSampler(ActiveSamplerBase):
+class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], np.ndarray]]):
     @property
     def dim(self) -> int:
         # perfectly copied from ActiveSamplerBase
@@ -484,7 +487,7 @@ class DistributionGuidedSampler(ActiveSamplerBase):
         x_best = max(X_cand, key=uncertainty)
         return x_best
 
-    def optimize(self, n_search: int, r_search: float = 0.5) -> None:
+    def optimize(self, n_search: int, r_search: float = 0.5) -> np.ndarray:
         center = self.best_param_so_far
         param_metric = self.metric.metirics[0]
         rand_params = param_metric.generate_random_inball(center, n_search, r_search)
