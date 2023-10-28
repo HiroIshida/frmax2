@@ -141,23 +141,52 @@ if __name__ == "__main__":
         with file_path.open(mode="rb") as f:
             sampler, param_opt = dill.load(f)
             sampler_cache: SamplerCache = sampler.sampler_cache
+
+        # plot volume history
         fig, ax = plt.subplots(1, 1)
         ax.plot(sampler_cache.best_volume_history, "o-", lw=0.3, ms=2)
-        ax.set_xlabel("iteration")
-        ax.set_ylabel("weightd volume estimate")
+        ax.set_xlabel("iteration $k$")
+        ax.set_ylabel(r"weightd volume estimate $\hat{V}_p( \theta_k^*$)")
+
         size = fig.get_size_inches()
         size[0] = size[0] * 0.5
         size[1] = size[0] * 1.2
         fig.set_size_inches(*size)
-        # adjust bottom and left
         plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
         plt.grid()
-        fig.savefig(f"./volume-history-{args.m}.png", dpi=300)
+        fig.savefig(f"./cartpole-volume-history-{args.m}.png", dpi=300)
         plt.show()
-        # save fig
-        env = Environment(param_dof)
 
-        # get hashvalue of file_path contents
+        # plot parameter history
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(sampler_cache.best_param_history, "-", lw=1.0)
+        ax.set_xlabel("iteration $k$")
+        ax.set_ylabel(r"parameters $\theta_k^*$")
+        if args.m == 1:
+            ax.legend(
+                [
+                    r"$\alpha$",
+                    r"$q_x$",
+                    r"$q_{\phi}$",
+                    r"$q_{\dot{\phi}}$",
+                    "$r$",
+                    r"$\tau_1$",
+                    r"$\tau_2$",
+                ],
+                loc="upper left",
+                ncol=2,
+                fontsize=7,
+            )
+        size = fig.get_size_inches()
+        size[0] = size[0] * 0.5
+        size[1] = size[0] * 1.2
+        fig.set_size_inches(*size)
+        plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
+        plt.grid()
+        fig.savefig(f"./cartpole-param-history-{args.m}.png", dpi=300)
+        plt.show()
+
+        env = Environment(param_dof)
         hash_valie = md5(file_path.read_bytes()).hexdigest()
         test_cache_path = Path(f"./test-cache-{hash_valie}-{args.n}.pkl")
 
@@ -212,19 +241,18 @@ if __name__ == "__main__":
             cross_points = es[np.abs(decision_values) < 0.1]
 
             fig, (ax1, ax2) = plt.subplots(2, 1)
-            ax1.plot(e_list[bools_hand], 10 * np.ones_like(e_list[bools_hand]), "o", c="blue", ms=2)
-            ax1.plot(
-                e_list[~bools_hand], -10 * np.ones_like(e_list[~bools_hand]), "o", c="red", ms=2
-            )
+            ax1.plot(e_list[bools_hand], np.ones_like(e_list[bools_hand]), "o", c="blue", ms=2)
+            ax1.plot(e_list[~bools_hand], -np.ones_like(e_list[~bools_hand]), "o", c="red", ms=2)
             ax1.axhline(y=0.0, color="k", linestyle="-")
 
-            ax2.plot(e_list[bools], 10 * np.ones_like(e_list[bools]), "o", c="blue", ms=2)
-            ax2.plot(e_list[~bools], -10 * np.ones_like(e_list[~bools]), "o", c="red", ms=2)
+            ax2.plot(e_list[bools], np.ones_like(e_list[bools]), "o", c="blue", ms=2)
+            ax2.plot(e_list[~bools], -np.ones_like(e_list[~bools]), "o", c="red", ms=2)
             ax2.axhline(y=0.0, color="k", linestyle="-")
             ax2.plot(es, decision_values, "-", lw=2.0, c="gray")
             # show cross points by vertical lines
             for x in cross_points:
                 ax2.axvline(x=x, color="k", linestyle="--")
+            ax2.set_xlabel(r"estimation error $e = \hat{m} - m$")
 
             # save fig
             size = fig.get_size_inches()
@@ -233,7 +261,8 @@ if __name__ == "__main__":
             fig.set_size_inches(*size)
             plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
             plt.grid()
-            fig.savefig(f"./comparison-{args.m}.png", dpi=300)
+            fig.savefig(f"./cartpole-comparison-{args.m}.png", dpi=300)
+            plt.tight_layout()
             plt.show()
         elif args.m == 2:
             fig, (ax1, ax2) = plt.subplots(1, 2)
@@ -244,6 +273,9 @@ if __name__ == "__main__":
             s = 5
             ax1.scatter(E[bools_hand, 1], E[bools_hand, 0], c="blue", s=s)
             ax1.scatter(E[~bools_hand, 1], E[~bools_hand, 0], c="red", s=s)
+            ax1.set_xlabel(r"estimation error $\hat{m} - m$")
+            ax2.set_xlabel(r"estimation error $\hat{m} - m$")
+            ax1.set_ylabel(r"estimation error $\hat{M} - M$")
 
             cmap = cm.get_cmap("coolwarm").reversed()
             sampler.fslset.show_sliced(
@@ -270,11 +302,10 @@ if __name__ == "__main__":
             size[1] = size[0] * 0.5
             fig.set_size_inches(*size)
             plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
-            fig.savefig(f"./comparison-{args.m}.png", dpi=300)
+            fig.savefig(f"./cartpole-comparison-{args.m}.png", dpi=300)
+            plt.tight_layout()
             plt.show()
         elif args.m == 3:
-            fig = plt.figure()
-            ax = fig.add_subplot(111, projection="3d")
             print("do nothing")
         else:
             assert False
