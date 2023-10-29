@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import time
 from logging import Logger
@@ -7,6 +8,19 @@ from typing import List, Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def temp_seed(seed, use_tempseed):
+    if use_tempseed:
+        state = np.random.get_state()
+        np.random.seed(seed)
+        try:
+            yield
+        finally:
+            np.random.set_state(state)
+    else:
+        yield
 
 
 def get_co_axes(dim_total: int, axes: List[int]) -> List[int]:
