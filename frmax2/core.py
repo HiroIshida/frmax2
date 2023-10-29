@@ -460,11 +460,20 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         self.sampler_cache.best_param_history.append(copy.deepcopy(self.best_param_so_far))
         self.sampler_cache.best_volume_history.append(best_volume_guess)
 
-    def ask(self) -> Optional[np.ndarray]:
+    def ask(
+        self, mode: Optional[Literal["exploration", "exploitation"]] = None
+    ) -> Optional[np.ndarray]:
+
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
-        # do_exploitition = np.random.rand() < 0.6
-        do_exploitition = np.random.rand() > self.config.epsilon_exploration
+        if mode is None:
+            do_exploitition = np.random.rand() > self.config.epsilon_exploration
+        elif mode == "exploration":
+            do_exploitition = False
+        elif mode == "exploitation":
+            do_exploitition = True
+        else:
+            assert False
 
         N_batch = 200
         X_cand = []
