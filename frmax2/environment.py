@@ -31,15 +31,16 @@ class GaussianEnvironment:
 
     def evaluate_size(self, param: np.ndarray) -> float:
         assert param.ndim == 1, "must be 1"
-        assert not self.with_hollow
         f = self._npdf(param)
 
         if self.m_dim == 1:
-            return 2 * f
+            return 2 * f * (1.0 - self.hollow_scale)
         elif self.m_dim == 2:
-            return math.pi * f**2
+            assert not self.with_hollow
+            return math.pi * f**2 * (1 - self.hollow_scale**2)
         elif self.m_dim == 3:
-            return 4 * math.pi * f**3 / 3.0
+            assert not self.with_hollow
+            return 4 * math.pi * f**3 * (1 - iself.hollow_scale**3) / 3.0
 
     def isInside(self, x: np.ndarray) -> bool:
         assert x.ndim == 1, "must be 1"
