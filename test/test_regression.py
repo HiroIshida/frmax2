@@ -1,22 +1,17 @@
-import argparse
-import logging
-from pathlib import Path
-
 import pickle
-import matplotlib.pyplot as plt
-import numpy as np
-import pytest
 from hashlib import md5
 
-from frmax2.core import ActiveSamplerConfig, HolllessActiveSampler
+import numpy as np
+
+from frmax2.core import (
+    ActiveSamplerConfig,
+    DGSamplerConfig,
+    DistributionGuidedSampler,
+    HolllessActiveSampler,
+)
 from frmax2.environment import GaussianEnvironment
 from frmax2.initialize import initialize
 from frmax2.metric import CompositeMetric
-from frmax2.utils import create_default_logger
-from frmax2.core import DGSamplerConfig, DistributionGuidedSampler
-from frmax2.environment import GaussianEnvironment
-from frmax2.metric import CompositeMetric
-from frmax2.utils import create_default_logger
 
 
 def test_regression_hollless():
