@@ -354,6 +354,8 @@ class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
 
 
 class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], np.ndarray]]):
+    X_cand_sorted_cache: np.ndarray  # for later visualization
+
     @property
     def dim(self) -> int:
         # perfectly copied from ActiveSamplerBase
@@ -482,8 +484,10 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         def uncertainty(x: np.ndarray) -> float:
             return np.min(self.metric(x, self.X))
 
-        x_best = max(X_cand, key=uncertainty)
-        return x_best
+        X_cand_sorted: np.ndarray = sorted(X_cand, key=lambda x: -uncertainty(x))
+        self.X_cand_sorted_cache = np.array(X_cand_sorted)
+        x_most_uncertain = X_cand_sorted[0]
+        return x_most_uncertain
 
     def ask_additional(self, param_here: np.ndarray) -> np.ndarray:
         sliced_points = []
