@@ -13,7 +13,9 @@ from frmax2.utils import create_default_logger, temp_seed
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("-n", type=int, default=201)
+parser.add_argument("-eps", type=float, default=0.4)
 parser.add_argument("--mode", type=str, default="default")  # default, exploration, exploitition
+parser.add_argument("--hollow", action="store_true", help="hollow")
 
 args = parser.parse_args()
 
@@ -21,13 +23,10 @@ np.random.seed(args.seed)
 
 create_default_logger(Path("./"), "train", logging.DEBUG)
 
-env = GaussianEnvironment(1, 1, with_bias=True)
+env = GaussianEnvironment(1, 1, with_bias=False, with_hollow=args.hollow)
 ls_param, ls_co = env.default_lengthscales()
 ls_param *= 3.0
 param_init = env.default_init_param()
-
-
-env = GaussianEnvironment(1, 1, with_bias=False, with_hollow=False)
 
 config = DGSamplerConfig(
     n_mc_param_search=20,
@@ -39,7 +38,7 @@ config = DGSamplerConfig(
     c_svm_reduction_rate=1.0,
     r_exploration=0.5,
     learning_rate=0.5,
-    epsilon_exploration=0.5,
+    epsilon_exploration=args.eps,
 )
 
 
@@ -80,11 +79,15 @@ for i in range(args.n):
 
         param_best_now = sampler.best_param_so_far
         ax.axvline(x=param_best_now[0], color="k", linestyle="--", zorder=0)
-        ax.axvspan(sampler.best_param_so_far - ls_param.item() * config.r_exploration,
-                sampler.best_param_so_far + ls_param.item() * config.r_exploration,
-                ymin = 0.0, ymax=2.5, alpha=0.1, color="yellow")
+        ax.axvspan(
+            sampler.best_param_so_far - ls_param.item() * config.r_exploration,
+            sampler.best_param_so_far + ls_param.item() * config.r_exploration,
+            ymin=0.0,
+            ymax=2.5,
+            alpha=0.1,
+            color="yellow",
+        )
 
-        # plot internal state
         if args.mode != "default":
             assert args.mode in ["exploration", "exploitation"]
             with temp_seed(0, True):
@@ -93,22 +96,46 @@ for i in range(args.n):
                 sampler.X_cand_sorted_cache[:, 0], sampler.X_cand_sorted_cache[:, 1], c="k", s=1
             )
             x_selected = sampler.X_cand_sorted_cache[0]
-            # plot selected as a yellow star
             ax.scatter(x_selected[0], x_selected[1], c="orange", marker="*", s=100)
         else:
             assert args.mode == "default"
 
         ax.set_xlim(-2.5, 1.5)
-        ax.set_ylim(-1.6, 1.6)
-        ax.axhline(y=-1.5, color="k", linestyle="--", zorder=0)
-        ax.axhline(y=1.5, color="k", linestyle="--", zorder=0)
-        # save figure to file
-        if args.mode == "default":
-            plt.savefig(save_dir + f"toy_example_extended_{i}.png", dpi=300)
+        ax.set_ylim(-1.5, 1.5)
+        # ax.axhline(y=-1.5, color="k", linestyle="--", zorder=0)
+        # ax.axhline(y=1.5, color="k", linestyle="--", zorder=0)
+        fig.set_size_inches(5.0, 3.5)
+
+        if args.hollow:
+            file_name = f"toy_example_extended_hollow_{i}.png"
         else:
-            plt.savefig(save_dir + f"toy_example_extended_{i}_{args.mode}.png", dpi=300)
-        plt.show()
+            file_name = f"toy_example_extended_{i}.png"
+        if args.mode != "default":
+            file_name = file_name.replace(".png", f"_{args.mode}.png")
+        file_name_full = save_dir + file_name
+        plt.savefig(file_name_full, dpi=300)
         plt.close()
+
+        # plot coverage curve
+        if args.mode == "default":
+            fig, ax = plt.subplots()
+            param_lin = np.linspace(-2.5, 1.5, 100)
+            volumes = [
+                sampler.fslset.sliced_volume_grid_points(np.array([p]), [0], 1000) / 3.0
+                for p in param_lin
+            ]
+            ax.plot(xlin, [env.evaluate_size(np.array([p])) / 3.0 for p in param_lin], "gray")
+            ax.plot(param_lin, volumes, "b")
+            ax.set_xlabel("param")
+            ax.set_ylabel("coverage")
+            ax.set_xlim(-2.5, 1.5)
+            ax.set_ylim(0.0, 0.8)
+            fig.set_size_inches(5.0, 2.0)
+            if args.hollow:
+                plt.savefig(save_dir + f"toy_example_extended_coverage_hollow_{i}.png", dpi=300)
+            else:
+                plt.savefig(save_dir + f"toy_example_extended_coverage_{i}.png", dpi=300)
+            plt.close()
 
     sampler.update_center()
     x = sampler.ask()
