@@ -136,6 +136,16 @@ class SuperlevelSet:
         else:
             return surface.volume()
 
+    def sliced_volume_grid_points(
+        self, point_slice: np.ndarray, axes_slice: List[int], n_grid: int
+    ) -> float:
+        grid_points = self.create_grid_points(point_slice, axes_slice, n_grid)
+        values = self.func(grid_points)
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+        return np.sum(values > 0.0) / len(grid_points) * float(np.prod(b_max_co - b_min_co))
+
     def measure_region_widths_mc(
         self, point_slice: np.ndarray, axes_slice: List[int], n_mc: int
     ) -> np.ndarray:
