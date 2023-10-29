@@ -31,10 +31,11 @@ class GaussianEnvironment:
 
     def evaluate_size(self, param: np.ndarray) -> float:
         assert param.ndim == 1, "must be 1"
+        assert not self.with_hollow
         f = self._npdf(param)
 
         if self.m_dim == 1:
-            return (2 * f).item()  # adhoc item
+            return 2 * f
         elif self.m_dim == 2:
             return math.pi * f**2
         elif self.m_dim == 3:

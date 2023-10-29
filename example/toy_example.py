@@ -42,8 +42,8 @@ for i in range(args.n):
 fig, ax = plt.subplots()
 env.visualize_region(-2.5, 1.5, (fig, ax))
 
-X_positive = sampler.X[sampler.Y]
-X_negative = sampler.X[~sampler.Y]
+X_positive = sampler._X[sampler.Y]
+X_negative = sampler._X[~sampler.Y]
 ax.scatter(X_positive[:, 0], X_positive[:, 1], c="b")
 ax.scatter(X_negative[:, 0], X_negative[:, 1], c="r")
 

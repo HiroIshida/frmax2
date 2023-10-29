@@ -7,7 +7,6 @@ import numpy as np
 
 from frmax2.core import DGSamplerConfig, DistributionGuidedSampler
 from frmax2.environment import GaussianEnvironment
-from frmax2.initialize import initialize
 from frmax2.metric import CompositeMetric
 from frmax2.utils import create_default_logger
 
@@ -26,7 +25,7 @@ ls_param *= 2.0
 param_init = env.default_init_param()
 
 
-env = GaussianEnvironment(1, 1, with_bias=False, with_hollow=True)
+env = GaussianEnvironment(1, 1, with_bias=False, with_hollow=False)
 
 config = DGSamplerConfig(
     n_mc_param_search=20,
@@ -38,13 +37,14 @@ config = DGSamplerConfig(
     c_svm_reduction_rate=1.0,
     r_exploration=0.5,
     learning_rate=0.5,
-    epsilon_exploration=0.2
+    epsilon_exploration=0.2,
 )
 
 
 def situation_sampler() -> np.ndarray:
     e = np.random.rand() * 3.0 - 1.5
     return np.array([e])
+
 
 e_list = np.linspace(-0.3, 0.3, 6)
 X = np.array([np.hstack([param_init, e]) for e in e_list])
@@ -82,14 +82,16 @@ for i in range(args.n):
         ax.set_ylim(-1.6, 1.6)
         ax.axhline(y=-1.5, color="k", linestyle="--", zorder=0)
         ax.axhline(y=1.5, color="k", linestyle="--", zorder=0)
-        plt.show()
+        # save figure to file
+        plt.savefig(f"toy_example_extended_{i}.png", dpi=300)
+        plt.close()
 
     sampler.update_center()
     x = sampler.ask()
     sampler.tell(x, env.isInside(x))
 
-x_opt = sampler.optimize(100)
+# x_opt = sampler.optimize(100)
 
-for i in range(20):
-    x = sampler.ask_additional(x_opt)
-    sampler.tell(x, env.isInside(x))
+# for i in range(20):
+#     x = sampler.ask_additional(x_opt)
+#     sampler.tell(x, env.isInside(x))
