@@ -98,6 +98,43 @@ class ActiveSamplerBase(ABC, Generic[ActiveSamplerConfigT, SituationSamplerT]):
     def tell(self, x: np.ndarray, y: bool) -> None:
         pass
 
+    @staticmethod
+    @abstractmethod
+    def _compute_sliced_volume_inner(
+        fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfigT
+    ) -> float:
+        pass
+
+    def optimize(self, n_search: int, r_search: float = 0.5) -> np.ndarray:
+        center = self.best_param_so_far
+        param_metric = self.metric.metirics[0]
+        rand_params = param_metric.generate_random_inball(center, n_search, r_search)
+        rand_params_filtered = list(filter(self.is_valid_param, rand_params))
+        volumes = self.compute_sliced_volume_batch(rand_params_filtered)
+        idx_max_volume = np.argmax(volumes)
+        best_param_so_far = rand_params_filtered[idx_max_volume]
+        return best_param_so_far
+
+    def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
+        # perfectly copied from ActiveSamplerBase
+        if self.config.n_process == 1:
+            return np.array(
+                [
+                    self._compute_sliced_volume_inner(self.fslset, param, self.config)
+                    for param in params
+                ]
+            )
+        else:
+            n_param = len(params)
+            with ProcessPoolExecutor(self.config.n_process) as executor:
+                results = executor.map(
+                    self._compute_sliced_volume_inner,
+                    [self.fslset] * n_param,
+                    params,
+                    [self.config] * n_param,
+                )
+            return np.array(list(results))
+
 
 class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
     fslset: SuperlevelSet
@@ -126,25 +163,6 @@ class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
 
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         return self._compute_sliced_volume_inner(self.fslset, param, self.config)
-
-    def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
-        if self.config.n_process == 1:
-            return np.array(
-                [
-                    self._compute_sliced_volume_inner(self.fslset, param, self.config)
-                    for param in params
-                ]
-            )
-        else:
-            n_param = len(params)
-            with ProcessPoolExecutor(self.config.n_process) as executor:
-                results = executor.map(
-                    self._compute_sliced_volume_inner,
-                    [self.fslset] * n_param,
-                    params,
-                    [self.config] * n_param,
-                )
-            return np.array(list(results))
 
     def sample_sliced_points(self, param: np.ndarray) -> np.ndarray:
         axes_co = get_co_axes(self.dim, self.axes_param)
@@ -377,26 +395,6 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         # perfectly copied from ActiveSamplerBase
         return self._compute_sliced_volume_inner(self.fslset, param, self.config)
 
-    def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
-        # perfectly copied from ActiveSamplerBase
-        if self.config.n_process == 1:
-            return np.array(
-                [
-                    self._compute_sliced_volume_inner(self.fslset, param, self.config)
-                    for param in params
-                ]
-            )
-        else:
-            n_param = len(params)
-            with ProcessPoolExecutor(self.config.n_process) as executor:
-                results = executor.map(
-                    self._compute_sliced_volume_inner,
-                    [self.fslset] * n_param,
-                    params,
-                    [self.config] * n_param,
-                )
-            return np.array(list(results))
-
     def _determine_param_candidates(self) -> Tuple[np.ndarray, np.ndarray]:
         # perfectly copied from ActiveSamplerBase
 
@@ -486,16 +484,6 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
 
         x_best = max(X_cand, key=uncertainty)
         return x_best
-
-    def optimize(self, n_search: int, r_search: float = 0.5) -> np.ndarray:
-        center = self.best_param_so_far
-        param_metric = self.metric.metirics[0]
-        rand_params = param_metric.generate_random_inball(center, n_search, r_search)
-        rand_params_filtered = list(filter(self.is_valid_param, rand_params))
-        volumes = self.compute_sliced_volume_batch(rand_params_filtered)
-        idx_max_volume = np.argmax(volumes)
-        best_param_so_far = rand_params_filtered[idx_max_volume]
-        return best_param_so_far
 
     def ask_additional(self, param_here: np.ndarray) -> np.ndarray:
         sliced_points = []
