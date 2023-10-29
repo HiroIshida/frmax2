@@ -8,11 +8,13 @@ import numpy as np
 from frmax2.core import DGSamplerConfig, DistributionGuidedSampler
 from frmax2.environment import GaussianEnvironment
 from frmax2.metric import CompositeMetric
-from frmax2.utils import create_default_logger
+from frmax2.utils import create_default_logger, temp_seed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("-n", type=int, default=201)
+parser.add_argument("--mode", type=str, default="default")  # default, exploration, exploitition
+
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -21,7 +23,7 @@ create_default_logger(Path("./"), "train", logging.DEBUG)
 
 env = GaussianEnvironment(1, 1, with_bias=True)
 ls_param, ls_co = env.default_lengthscales()
-ls_param *= 2.0
+ls_param *= 3.0
 param_init = env.default_init_param()
 
 
@@ -37,7 +39,7 @@ config = DGSamplerConfig(
     c_svm_reduction_rate=1.0,
     r_exploration=0.5,
     learning_rate=0.5,
-    epsilon_exploration=0.2,
+    epsilon_exploration=0.5,
 )
 
 
@@ -54,17 +56,18 @@ metric = CompositeMetric.from_ls_list([ls_param, ls_co])
 sampler = DistributionGuidedSampler(
     X, Y, metric, param_init, situation_sampler=situation_sampler, config=config
 )
+save_dir = "./figs_extended/"
 
 for i in range(args.n):
     print(i)
-    if i % 10 == 0:
+    if i % 5 == 0:
         fig, ax = plt.subplots()
         env.visualize_region(-2.5, 1.5, (fig, ax))
 
         X_positive = sampler.X[sampler.Y]
         X_negative = sampler.X[~sampler.Y]
-        ax.scatter(X_positive[:, 0], X_positive[:, 1], c="b")
-        ax.scatter(X_negative[:, 0], X_negative[:, 1], c="r")
+        ax.scatter(X_positive[:, 0], X_positive[:, 1], c="b", s=10)
+        ax.scatter(X_negative[:, 0], X_negative[:, 1], c="r", s=10)
 
         xlin = np.linspace(-2.5, 1.5, 100)
         ylin = np.linspace(-1.5, 3.5, 100)
@@ -77,13 +80,34 @@ for i in range(args.n):
 
         param_best_now = sampler.best_param_so_far
         ax.axvline(x=param_best_now[0], color="k", linestyle="--", zorder=0)
+        ax.axvspan(sampler.best_param_so_far - ls_param.item() * config.r_exploration,
+                sampler.best_param_so_far + ls_param.item() * config.r_exploration,
+                ymin = 0.0, ymax=2.5, alpha=0.1, color="yellow")
+
+        # plot internal state
+        if args.mode != "default":
+            assert args.mode in ["exploration", "exploitation"]
+            with temp_seed(0, True):
+                sampler.ask(mode=args.mode)
+            ax.scatter(
+                sampler.X_cand_sorted_cache[:, 0], sampler.X_cand_sorted_cache[:, 1], c="k", s=1
+            )
+            x_selected = sampler.X_cand_sorted_cache[0]
+            # plot selected as a yellow star
+            ax.scatter(x_selected[0], x_selected[1], c="orange", marker="*", s=100)
+        else:
+            assert args.mode == "default"
 
         ax.set_xlim(-2.5, 1.5)
         ax.set_ylim(-1.6, 1.6)
         ax.axhline(y=-1.5, color="k", linestyle="--", zorder=0)
         ax.axhline(y=1.5, color="k", linestyle="--", zorder=0)
         # save figure to file
-        plt.savefig(f"toy_example_extended_{i}.png", dpi=300)
+        if args.mode == "default":
+            plt.savefig(save_dir + f"toy_example_extended_{i}.png", dpi=300)
+        else:
+            plt.savefig(save_dir + f"toy_example_extended_{i}_{args.mode}.png", dpi=300)
+        plt.show()
         plt.close()
 
     sampler.update_center()
