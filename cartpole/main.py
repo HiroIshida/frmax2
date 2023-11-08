@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="test")
     parser.add_argument("-n", type=int)
-    parser.add_argument("-m", type=int, default=1, help="number of error dim")
+    parser.add_argument("-m", type=int, default=3, help="number of error dim")
 
     args = parser.parse_args()
 
@@ -221,15 +221,24 @@ if __name__ == "__main__":
 
             bools = []
             bools_hand = []
+            est_true_count = 0
+            fp_count = 0
             for e in tqdm.tqdm(e_list):
                 res = env._rollout(param_opt, e)
                 res_hand = env._rollout(param_hand, e)
                 bools.append(res)
                 bools_hand.append(res_hand)
+                is_est_feasible = sampler.fslset.func(np.array([np.hstack([param_opt, e])]))[0] > 0.0
+                if is_est_feasible:
+                    est_true_count += 1
+                    if not res:
+                        fp_count += 1
             bools = np.array(bools)
             bools_hand = np.array(bools_hand)
             with test_cache_path.open(mode="wb") as f:
                 dill.dump((e_list, bools, bools_hand), f)
+            fp_rate = fp_count  / est_true_count
+            print(f"fp rate: {fp_rate}")
         print(f"hand volume: {np.sum(bools_hand) / len(bools_hand)}")
         print(f"actual volume: {np.sum(bools) / len(bools)}")
 

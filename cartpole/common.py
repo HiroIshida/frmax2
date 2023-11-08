@@ -74,12 +74,15 @@ class CartpoleVisualizer:
         ax.set_aspect("equal")
 
     def render(self, state):
+        self.fig.canvas.flush_events()
         x, x_dot, theta, theta_dot = state
         _, _, l, _ = self.model_param.m, self.model_param.M, self.model_param.l, self.model_param.g
         self.cart_circle.center = (x, 0)
         self.pole.set_data((x, x + l * np.sin(theta)), (0, -l * np.cos(theta)))
         self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+
+    def save_figure(self, path: str, dpi: int = 300):
+        self.fig.savefig(path, dpi=dpi)
 
 
 # Chung, Chung Choo, and John Hauser. "Nonlinear control of a swinging pendulum." automatica 31.6 (1995): 851-862.
