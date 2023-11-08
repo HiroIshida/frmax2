@@ -3,6 +3,7 @@ from typing import Tuple
 
 import numpy as np
 from matplotlib.patches import Circle
+from scipy.special import gamma
 
 
 def npdf(dist_from_center: float) -> float:
@@ -30,17 +31,17 @@ class GaussianEnvironment:
         return npdf(dists)
 
     def evaluate_size(self, param: np.ndarray) -> float:
-        assert param.ndim == 1, "must be 1"
-        f = self._npdf(param)
-
-        if self.m_dim == 1:
-            return 2 * f * (1.0 - self.hollow_scale)
-        elif self.m_dim == 2:
-            assert not self.with_hollow
-            return math.pi * f**2 * (1 - self.hollow_scale**2)
-        elif self.m_dim == 3:
-            assert not self.with_hollow
-            return 4 * math.pi * f**3 * (1 - iself.hollow_scale**3) / 3.0
+        R = self._npdf(param)
+        r = self.hollow_scale * R
+        compute_volume = (
+            lambda r: np.pi ** (self.m_dim / 2) / (gamma(self.m_dim / 2 + 1)) * r**self.m_dim
+        )
+        R_volume = compute_volume(R)
+        if r > 1e-6:
+            r_volume = compute_volume(r)
+        else:
+            r_volume = 0.0
+        return R_volume - r_volume
 
     def isInside(self, x: np.ndarray) -> bool:
         assert x.ndim == 1, "must be 1"
