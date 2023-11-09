@@ -16,6 +16,16 @@ ActiveSamplerConfigT = TypeVar("ActiveSamplerConfigT", bound="ActiveSamplerConfi
 SituationSamplerT = TypeVar("SituationSamplerT", bound=Union[Callable[[], np.ndarray], None])
 
 
+class BlackBoxSampler(ABC):
+    @abstractmethod
+    def ask(self) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def tell(self, x: np.ndarray, y: bool) -> None:
+        pass
+
+
 @dataclass
 class ActiveSamplerConfig:
     n_mc_param_search: int = 300
@@ -50,7 +60,7 @@ class SamplerCache:
         self.best_volume_history = []
 
 
-class ActiveSamplerBase(ABC, Generic[ActiveSamplerConfigT, SituationSamplerT]):
+class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, SituationSamplerT]):
     fslset: SuperlevelSet
     metric: CompositeMetric
     is_valid_param: Callable[[np.ndarray], bool]
@@ -89,14 +99,6 @@ class ActiveSamplerBase(ABC, Generic[ActiveSamplerConfigT, SituationSamplerT]):
         self.c_svm_current = c_svm_current
         self.count_additional = 0
         self.situation_sampler = situation_sampler
-
-    @abstractmethod
-    def ask(self) -> np.ndarray:
-        pass
-
-    @abstractmethod
-    def tell(self, x: np.ndarray, y: bool) -> None:
-        pass
 
     @staticmethod
     @abstractmethod
