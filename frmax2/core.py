@@ -435,12 +435,13 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         self, fslset: SuperlevelSet, param: np.ndarray, config: ActiveSamplerConfig
     ) -> float:
         assert config.integration_method == "mc"
-        count = 0
+        x_list = []
         for _ in range(config.n_mc_integral):
             situation = self.situation_sampler()
             x = np.hstack([param, situation])
-            if self.fslset.func(np.array([x]))[0] > 0:
-                count += 1
+            x_list.append(x)
+        X = np.array(x_list)
+        count = np.sum(self.fslset.func(X) > 0)
         return count / config.n_mc_integral
 
     def update_center(self):
