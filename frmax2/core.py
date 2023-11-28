@@ -93,7 +93,8 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
-            self.is_valid_param = lambda x: True
+            is_valid_param = lambda x: True  # noqa
+        self.is_valid_param = is_valid_param
         self.X = X
         self.Y = Y
         self.axes_param = list(range(len(param_init)))
