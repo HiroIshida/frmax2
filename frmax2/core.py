@@ -40,7 +40,7 @@ class ActiveSamplerConfig:
     c_svm_reduction_rate: float = 1.0
     n_process: int = 1  # if > 1, use multiprocessing
     learning_rate: float = 1.0
-    param_ls_reduction_rate: float = 0.995  # only used in DistributionGuidedSampler
+    param_ls_reduction_rate: float = 1.0  # only used in DistributionGuidedSampler
     integration_method: Literal["mc", "grid"] = "grid"
     measure_width_method: Literal["mc", "grid"] = "grid"
     sample_error_method: Literal["mc-margin", "mc-inside", "grid"] = "grid"
@@ -477,7 +477,9 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
             x = np.hstack([param, situation])
             x_list.append(x)
         X = np.array(x_list)
-        count = np.sum(self.fslset.func(X) > 0)
+
+        with threadpoolctl.threadpool_limits(limits=1, user_api="openmp"):
+            count = np.sum(self.fslset.func(X) > 0)
         return count / config.n_mc_integral
 
     def update_center(self):
