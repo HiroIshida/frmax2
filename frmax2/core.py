@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Callable, Generic, List, Literal, Optional, Tuple, TypeVar, Union
 
 import numpy as np
+import threadpoolctl
+from cmaes import CMA
 
 from frmax2.metric import CompositeMetric, Metric
 from frmax2.region import SuperlevelSet, get_co_axes
@@ -107,15 +109,49 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
     ) -> float:
         pass
 
-    def optimize(self, n_search: int, r_search: float = 0.5) -> np.ndarray:
+    def optimize(
+        self,
+        n_search: int,
+        r_search: float = 0.5,
+        method: Literal["random", "cmaes"] = "random",
+    ) -> np.ndarray:
         center = self.best_param_so_far
         param_metric = self.metric.metirics[0]
-        rand_params = param_metric.generate_random_inball(center, n_search, r_search)
-        rand_params_filtered = list(filter(self.is_valid_param, rand_params))
-        volumes = self.compute_sliced_volume_batch(rand_params_filtered)
-        idx_max_volume = np.argmax(volumes)
-        best_param_so_far = rand_params_filtered[idx_max_volume]
-        return best_param_so_far
+
+        if method == "random":
+            rand_params = param_metric.generate_random_inball(center, n_search, r_search)
+            rand_params_filtered = list(filter(self.is_valid_param, rand_params))
+            volumes = self.compute_sliced_volume_batch(rand_params_filtered)
+            idx_max_volume = np.argmax(volumes)
+            best_param_so_far = rand_params_filtered[idx_max_volume]
+            return best_param_so_far
+        elif method == "cmaes":
+            ls_co = np.sqrt(np.diag(param_metric.cmat))
+            assert np.all(ls_co == ls_co[0]), "fix this"
+            optimizer = CMA(mean=center, sigma=ls_co[0] * r_search)
+            n_count_evaluate = 0
+            best_param = center
+            best_volume = self.compute_sliced_volume_batch([best_param])[0]
+            while n_count_evaluate < n_search:
+                dataset = []
+                for _ in range(optimizer.population_size):
+                    param = optimizer.ask()
+                    val = self.compute_sliced_volume_batch([param])[0]
+                    dataset.append((param, -val))  # minus for minimization
+                    n_count_evaluate += 1
+                optimizer.tell(dataset)
+                if optimizer.should_stop() or n_count_evaluate >= n_search:
+                    break
+                params, negative_volumes = zip(*dataset)
+                best_index = np.argmin(negative_volumes)
+
+                if -negative_volumes[best_index] > best_volume:
+                    best_param = params[best_index]
+                    best_volume = -negative_volumes[best_index]
+
+            return best_param
+        else:
+            assert False
 
     def compute_sliced_volume_batch(self, params: List[np.ndarray]) -> np.ndarray:
         # perfectly copied from ActiveSamplerBase
