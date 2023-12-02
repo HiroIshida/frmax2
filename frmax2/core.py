@@ -103,6 +103,9 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.count_additional = 0
         self.situation_sampler = situation_sampler
 
+    def update_center(self):
+        raise NotImplementedError("this function is delted")
+
     @staticmethod
     @abstractmethod
     def _compute_sliced_volume_inner(
@@ -483,7 +486,7 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
             count = np.sum(self.fslset.func(X) > 0)
         return count / config.n_mc_integral
 
-    def update_center(self):
+    def _update_center(self):
         assert self.count_additional == 0
         param_cands, volumes = self._determine_param_candidates()
         assert len(param_cands) > 0
@@ -505,6 +508,8 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
     def ask(
         self, mode: Optional[Literal["exploration", "exploitation"]] = None
     ) -> Optional[np.ndarray]:
+
+        self._update_center()
 
         param_metric = self.metric.metirics[0]
         param_center = self.best_param_so_far
