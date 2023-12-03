@@ -44,14 +44,14 @@ class SaasBoOptimzer:
 
     def fit_gp(self, X: List[np.ndarray], y: List[float]):
         X_normalized = [self.bound.normalize(x) for x in X]
-        X_ = torch.Tensor(np.vstack(X_normalized))
-        Y_ = torch.Tensor(y).unsqueeze(-1)
+        X_ = torch.Tensor(np.vstack(X_normalized)).double()
+        Y_ = torch.Tensor(y).unsqueeze(-1).double()
         self.model = SaasFullyBayesianSingleTaskGP(
-            X_, Y_, train_Yvar=torch.full_like(Y_, 1e-6), outcome_transform=Standardize(m=1)
+            X_, Y_, train_Yvar=None, outcome_transform=Standardize(m=1)
         )
         n_scale = 1
-        warmup_steps = 64 * n_scale
-        num_samples = 32 * n_scale
+        warmup_steps = 32 * n_scale
+        num_samples = 16 * n_scale
         fit_fully_bayesian_model_nuts(
             self.model,
             warmup_steps=warmup_steps,
