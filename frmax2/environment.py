@@ -1,4 +1,5 @@
 import math
+from abc import ABC, abstractmethod
 from typing import Tuple
 
 import numpy as np
@@ -10,7 +11,7 @@ def npdf(dist_from_center: float) -> float:
     return math.exp(-0.5 * dist_from_center**2)
 
 
-class GaussianEnvironment:
+class EnvironmentBase(ABC):
     def __init__(self, n_dim: int, m_dim: int, with_bias: bool = False, with_hollow: bool = False):
         self.n_dim = n_dim
         self.m_dim = m_dim
@@ -26,12 +27,12 @@ class GaussianEnvironment:
         self.with_hollow = with_hollow
         self.with_bias = with_bias
 
-    def _npdf(self, param):
-        dists = np.sqrt(np.sum(param**2))
-        return npdf(dists)
+    @abstractmethod
+    def radius_func(self, param: np.ndarray) -> float:
+        pass
 
     def evaluate_size(self, param: np.ndarray) -> float:
-        R = self._npdf(param)
+        R = self.radius_func(param)
         r = self.hollow_scale * R
         compute_volume = (
             lambda r: np.pi ** (self.m_dim / 2) / (gamma(self.m_dim / 2 + 1)) * r**self.m_dim
@@ -46,7 +47,7 @@ class GaussianEnvironment:
     def isInside(self, x: np.ndarray) -> bool:
         assert x.ndim == 1, "must be 1"
         e, theta = x[-self.m_dim :], x[0 : self.n_dim]
-        f_value = self._npdf(theta)
+        f_value = self.radius_func(theta)
         bias = self.bias_param * f_value
         inside_outer = bool(np.linalg.norm(e - bias) < f_value)
         inside_inner = bool(np.linalg.norm(e - bias) < self.hollow_scale * f_value)
@@ -86,3 +87,9 @@ class GaussianEnvironment:
         assert self.m_dim == 2
         circle = Circle((self.bias_param, self.bias_param), 1.0, fill=False, color="red")
         ax.add_patch(circle)
+
+
+class GaussianEnvironment(EnvironmentBase):
+    def radius_func(self, param: np.ndarray) -> float:
+        dists = np.sqrt(np.sum(param**2))
+        return npdf(dists)
