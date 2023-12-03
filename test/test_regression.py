@@ -55,6 +55,7 @@ def test_regression_generalized():
         r_exploration=0.5,
         learning_rate=0.5,
         epsilon_exploration=0.2,
+        param_ls_reduction_rate=0.995,
     )
 
     def situation_sampler() -> np.ndarray:
@@ -71,7 +72,6 @@ def test_regression_generalized():
     )
 
     for i in range(30):
-        sampler.update_center()
         x = sampler.ask()
         sampler.tell(x, env.isInside(x))
 
