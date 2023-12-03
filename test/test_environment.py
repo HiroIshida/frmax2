@@ -36,5 +36,19 @@ def test_gaussain_environment():
         assert not env_hollow.isInside(x)
 
 
+def test_environment_with_ignored_axes():
+    consider_axes = [0, 2]
+    env_3d = GaussianEnvironment(10, 5, error_consider_axes=consider_axes)
+    size = env_3d.evaluate_size(np.zeros(10))
+    np.testing.assert_almost_equal(size, np.pi * 1.0**2 * 3.0**3)
+
+    for _ in range(100):
+        param = np.zeros(10)
+        err = np.random.randn(5)
+        err[np.array(consider_axes)] = 0.0
+        assert env_3d.isInside(np.hstack([param, err]))
+
+
 if __name__ == "__main__":
     test_gaussain_environment()
+    test_environment_with_ignored_axes()

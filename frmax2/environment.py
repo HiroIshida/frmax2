@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from matplotlib.patches import Circle
@@ -12,7 +12,14 @@ def npdf(dist_from_center: float) -> float:
 
 
 class EnvironmentBase(ABC):
-    def __init__(self, n_dim: int, m_dim: int, with_bias: bool = False, with_hollow: bool = False):
+    def __init__(
+        self,
+        n_dim: int,
+        m_dim: int,
+        with_bias: bool = False,
+        with_hollow: bool = False,
+        error_consider_axes: Optional[List[int]] = None,
+    ):
         self.n_dim = n_dim
         self.m_dim = m_dim
         self.name = "gaussian"
@@ -26,6 +33,20 @@ class EnvironmentBase(ABC):
             self.hollow_scale = 0.0
         self.with_hollow = with_hollow
         self.with_bias = with_bias
+        if error_consider_axes is None:
+            error_consider_axes = list(range(self.m_dim))
+        self.error_consider_axes = np.array(error_consider_axes, dtype=int)
+
+    @property
+    def bounds(self) -> Tuple[np.ndarray, np.ndarray]:
+        return np.ones(self.m_dim) * -1.5, np.ones(self.m_dim) * 1.5
+
+    @property
+    def sampling_space_volume(self) -> np.ndarray:
+        return np.prod(self.bounds[1] - self.bounds[0])
+
+    def sample_situation(self) -> np.ndarray:
+        return np.random.uniform(self.bounds[0], self.bounds[1])
 
     @abstractmethod
     def radius_func(self, param: np.ndarray) -> float:
@@ -34,23 +55,32 @@ class EnvironmentBase(ABC):
     def evaluate_size(self, param: np.ndarray) -> float:
         R = self.radius_func(param)
         r = self.hollow_scale * R
+        m_consider = len(self.error_consider_axes)
         compute_volume = (
-            lambda r: np.pi ** (self.m_dim / 2) / (gamma(self.m_dim / 2 + 1)) * r**self.m_dim
+            lambda r: np.pi ** (m_consider / 2) / (gamma(m_consider / 2 + 1)) * r**m_consider
         )
         R_volume = compute_volume(R)
         if r > 1e-6:
             r_volume = compute_volume(r)
         else:
             r_volume = 0.0
-        return R_volume - r_volume
+
+        # because ignored dimension is filled with feasible region so we must multiply it
+        axes_ignored = np.array(list(set(list(range(self.m_dim))) - set(self.error_consider_axes)))
+        if len(axes_ignored) == 0:
+            volume_ignored = 1.0
+        else:
+            volume_ignored = np.prod(self.bounds[1][axes_ignored] - self.bounds[0][axes_ignored])
+        return (R_volume - r_volume) * volume_ignored
 
     def isInside(self, x: np.ndarray) -> bool:
         assert x.ndim == 1, "must be 1"
         e, theta = x[-self.m_dim :], x[0 : self.n_dim]
+        e_consider = e[self.error_consider_axes]
         f_value = self.radius_func(theta)
         bias = self.bias_param * f_value
-        inside_outer = bool(np.linalg.norm(e - bias) < f_value)
-        inside_inner = bool(np.linalg.norm(e - bias) < self.hollow_scale * f_value)
+        inside_outer = bool(np.linalg.norm(e_consider - bias) < f_value)
+        inside_inner = bool(np.linalg.norm(e_consider - bias) < self.hollow_scale * f_value)
         return inside_outer and not inside_inner
 
     def default_init_param(self) -> np.ndarray:
@@ -92,4 +122,14 @@ class EnvironmentBase(ABC):
 class GaussianEnvironment(EnvironmentBase):
     def radius_func(self, param: np.ndarray) -> float:
         dists = np.sqrt(np.sum(param**2))
+        return npdf(dists)
+
+
+class AnisoEnvironment(EnvironmentBase):
+    def radius_func(self, param: np.ndarray) -> float:
+        weight = np.ones(self.n_dim) * 0.05
+        weight[0] = 1.0
+        weight[1] = 0.5
+        param_ = param * weight
+        dists = np.sqrt(np.sum(param_**2))
         return npdf(dists)
