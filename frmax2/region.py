@@ -173,7 +173,6 @@ class SuperlevelSet:
         axes_slice: List[int],
         n_grid: int,
         fax: Tuple,
-        rich: bool = False,
         **kwargs,
     ) -> None:
         assert len(point_slice) == len(axes_slice)
@@ -184,9 +183,7 @@ class SuperlevelSet:
         data = values.reshape(n_grid, n_grid)
         X, Y = self.create_meshgrids(point_slice, axes_slice, n_grid)
         fig, ax = fax
-        if rich:
-            ax.contourf(X, Y, data, **kwargs)
-        ax.contour(X, Y, data, levels=[0.0])
+        ax.contour(X, Y, data, levels=[0.0], **kwargs)
 
     def create_meshgrids(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
