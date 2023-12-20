@@ -576,3 +576,16 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         self.count_additional += 1
         # << FINISH COPYING FROM ActiveSamplerBase
         return np.hstack([param_here, e_new])
+
+    def get_com(self, param_here: np.ndarray, n_mc: int = 2000) -> np.ndarray:
+        assert param_here.ndim == 1
+        error_dim = self.metric.metirics[1].dim
+        X = np.array([np.hstack([param_here, self.situation_sampler()]) for _ in range(n_mc)])
+        bools = self.fslset.func(X) > 0
+        E_positive = X[bools, -error_dim:]
+        e_mean = np.mean(E_positive, axis=0)
+        return e_mean
+
+    def get_optimal_after_additional(self) -> np.ndarray:
+        assert self.count_additional > 0
+        return self.X[-1][np.array(self.axes_param)]
