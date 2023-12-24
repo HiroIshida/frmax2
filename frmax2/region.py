@@ -88,8 +88,7 @@ class SuperlevelSet:
         box_cut: bool = True,
     ) -> "SuperlevelSet":
 
-        kernel = metric.gen_aniso_rbf_kernel()
-        svc = SVC(gamma="auto", kernel=kernel, probability=False, C=C)
+        svc = SVC(gamma="auto", kernel=metric.kern, probability=False, C=C)
 
         # check both positive and negative samples exist
         X_: np.ndarray = np.array(X, dtype=float)

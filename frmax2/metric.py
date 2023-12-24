@@ -22,22 +22,12 @@ class MetricBase(ABC):
     def sqrt_tensor(self):
         return sqrtm(np.linalg.inv(self.cmat))
 
-    def gen_aniso_rbf_kernel(self):
-        d = {"L": self.sqrt_tensor}
-
-        def kern(X_, Y_=None):
-            L = d["L"]
-            n_x, m_x = X_.shape
-
-            if Y_ is None:
-                Y_ = X_
-            Y_.shape[0]
-            X, Y = X_.dot(L), Y_.dot(L)
-            res = pairwise.rbf_kernel(X, Y)
-            # res = pairwise.polynomial_kernel(X, Y)
-            return res
-
-        return kern
+    def kern(self, X_, Y_=None):
+        if Y_ is None:
+            Y_ = X_
+        X, Y = X_.dot(self.sqrt_tensor), Y_.dot(self.sqrt_tensor)
+        res = pairwise.rbf_kernel(X, Y)
+        return res
 
     def __call__(self, x, X):
         if X.ndim == 1:
