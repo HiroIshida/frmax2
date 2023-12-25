@@ -1,5 +1,6 @@
 import copy
 import logging
+import multiprocessing as mp
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -62,6 +63,63 @@ class SamplerCache:
         self.best_volume_history = []
 
 
+class PreFactoBranchedAskResultCaliculator:
+    """
+    A class for optimizing the active sampling procedure in contexts where the evaluation of 
+    sample outcomes (y values) is time-intensive.
+
+    This class is particularly beneficial in scenarios like robotic reinforcement learning or
+    experimental design, where computing the y value corresponding to a sample (x) involves 
+    time-consuming processes such as executing a task with a real robot or conducting a 
+    physical experiment. It leverages multiprocessing to parallelize the computation of the 
+    next sampling point (ask() method) while the y value is being evaluated, thus reducing 
+    overall waiting time in the sampling loop.
+    """
+
+    def __init__(self):
+        self.mp_queue = None
+        self.mp_process = None
+
+    def start_bifurcation_prediction(self, sampler: "ActiveSamplerBase", x_asked: np.ndarray):
+        # run another process to predict background
+        self.mp_queue = mp.Queue()
+        self.mp_process = mp.Process(target=self._worker, args=(sampler, x_asked, self.mp_queue))
+        self.mp_process.start()
+
+    def get_bifurcation_prediction(
+        self, y_observed: bool
+    ) -> Optional[Tuple["ActiveSamplerBase", np.ndarray]]:
+        if self.mp_process is None:
+            return None
+        assert self.mp_queue is not None
+
+        self.mp_process.join()
+        ret_if_true, ret_if_false = self.mp_queue.get()
+        self.mp_queue = None
+        self.mp_process = None
+        if y_observed:
+            return ret_if_true
+        else:
+            return ret_if_false
+
+    @staticmethod
+    def _worker(sampler: "ActiveSamplerBase", x_asked: np.ndarray, mp_queue) -> None:
+        sampler_hypo_if_true = copy.deepcopy(sampler)
+        sampler_hypo_if_true.tell(x_asked, True)
+        x_predicted_if_true = sampler_hypo_if_true._ask()
+
+        sampler_hypo_if_false = copy.deepcopy(sampler)
+        sampler_hypo_if_false.tell(x_asked, False)
+        x_predicted_if_false = sampler_hypo_if_false._ask()
+
+        mp_queue.put(
+            (
+                (sampler_hypo_if_true, x_predicted_if_true),
+                (sampler_hypo_if_false, x_predicted_if_false),
+            )
+        )
+
+
 class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, SituationSamplerT]):
     fslset: SuperlevelSet
     metric: CompositeMetric
@@ -75,6 +133,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
     count_additional: int
     c_svm_current: float
     situation_sampler: SituationSamplerT
+    prefact_ask_calc: PreFactoBranchedAskResultCaliculator
 
     def __init__(
         self,
@@ -102,6 +161,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.c_svm_current = c_svm_current
         self.count_additional = 0
         self.situation_sampler = situation_sampler
+        self.prefact_ask_calc = PreFactoBranchedAskResultCaliculator()
 
     def update_center(self):
         raise NotImplementedError("this function is delted")
@@ -176,6 +236,30 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
                     [self.config] * n_param,
                 )
             return np.array(list(results))
+
+    def ask(self) -> np.ndarray:
+        ret = self.prefact_ask_calc.get_bifurcation_prediction(bool(self.Y[-1]))
+        bifurcation_prediction_not_called = ret is None
+        if bifurcation_prediction_not_called:
+            x = self._ask()
+            return x
+        else:
+            self = ret[0]  # so dirty
+            x = ret[1]
+            return x
+
+    @abstractmethod
+    def _ask(self) -> np.ndarray:
+        pass
+
+    def __getstate__(self):  # pickling
+        state = self.__dict__.copy()
+        state["prefact_ask_calc"] = None
+        return state
+
+    def __setstate__(self, state):  # unpickling
+        state["prefact_ask_calc"] = PreFactoBranchedAskResultCaliculator()
+        self.__dict__.update(state)
 
 
 class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
@@ -306,23 +390,8 @@ class HolllessActiveSampler(ActiveSamplerBase[ActiveSamplerConfig, None]):
                 assert len(x) == self.dim
                 uncertainty = np.min(self.metric(x, self.X))
                 x_uncertainty_pairs.append((x, uncertainty))
-        return x_uncertainty_pairs
-
-    def ask(self) -> np.ndarray:
-        x_uncertainty_pairs = self._ask()
         x_uncertainty_pairs.sort(key=lambda x: -x[1])
         return x_uncertainty_pairs[0][0]
-
-    def ask_n_best(self, n: int) -> List[np.ndarray]:
-        x_uncertainty_pairs = self._ask()
-        x_uncertainty_pairs.sort(key=lambda x: -x[1])
-        x_best = x_uncertainty_pairs[0][0]
-        x_uncertainty_pairs = x_uncertainty_pairs[1:]
-        np.random.shuffle(x_uncertainty_pairs)
-        if len(x_uncertainty_pairs) < n:
-            return [x_best] + [x for x, _ in x_uncertainty_pairs]
-        else:
-            return [x_best] + [x for x, _ in x_uncertainty_pairs[: n - 1]]
 
     def ask_additional(self) -> np.ndarray:
         param_here = self.best_param_so_far
@@ -505,9 +574,7 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         self.sampler_cache.best_param_history.append(copy.deepcopy(self.best_param_so_far))
         self.sampler_cache.best_volume_history.append(best_volume_guess)
 
-    def ask(
-        self, mode: Optional[Literal["exploration", "exploitation"]] = None
-    ) -> Optional[np.ndarray]:
+    def _ask(self, mode: Optional[Literal["exploration", "exploitation"]] = None) -> np.ndarray:
 
         self._update_center()
 
