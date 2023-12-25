@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Generic, List, Literal, Optional, Tuple, TypeVar, Union
 
+import dill
 import numpy as np
 import threadpoolctl
 from cmaes import CMA
@@ -65,14 +66,14 @@ class SamplerCache:
 
 class PreFactoBranchedAskResultCaliculator:
     """
-    A class for optimizing the active sampling procedure in contexts where the evaluation of 
+    A class for optimizing the active sampling procedure in contexts where the evaluation of
     sample outcomes (y values) is time-intensive.
 
     This class is particularly beneficial in scenarios like robotic reinforcement learning or
-    experimental design, where computing the y value corresponding to a sample (x) involves 
-    time-consuming processes such as executing a task with a real robot or conducting a 
-    physical experiment. It leverages multiprocessing to parallelize the computation of the 
-    next sampling point (ask() method) while the y value is being evaluated, thus reducing 
+    experimental design, where computing the y value corresponding to a sample (x) involves
+    time-consuming processes such as executing a task with a real robot or conducting a
+    physical experiment. It leverages multiprocessing to parallelize the computation of the
+    next sampling point (ask() method) while the y value is being evaluated, thus reducing
     overall waiting time in the sampling loop.
     """
 
@@ -83,7 +84,9 @@ class PreFactoBranchedAskResultCaliculator:
     def start_bifurcation_prediction(self, sampler: "ActiveSamplerBase", x_asked: np.ndarray):
         # run another process to predict background
         self.mp_queue = mp.Queue()
-        self.mp_process = mp.Process(target=self._worker, args=(sampler, x_asked, self.mp_queue))
+        self.mp_process = mp.Process(
+            target=self._worker, args=(dill.dumps(sampler), x_asked, self.mp_queue)
+        )
         self.mp_process.start()
 
     def get_bifurcation_prediction(
@@ -98,24 +101,27 @@ class PreFactoBranchedAskResultCaliculator:
         self.mp_queue = None
         self.mp_process = None
         if y_observed:
-            return ret_if_true
+            ret = ret_if_true
         else:
-            return ret_if_false
+            ret = ret_if_false
+        sampler_dilled, x_predicted = ret
+        sampler = dill.loads(sampler_dilled)
+        return sampler, x_predicted
 
     @staticmethod
-    def _worker(sampler: "ActiveSamplerBase", x_asked: np.ndarray, mp_queue) -> None:
-        sampler_hypo_if_true = copy.deepcopy(sampler)
+    def _worker(sampler_dilled: bytes, x_asked: np.ndarray, mp_queue) -> None:
+        sampler_hypo_if_true = dill.loads(sampler_dilled)
         sampler_hypo_if_true.tell(x_asked, True)
         x_predicted_if_true = sampler_hypo_if_true._ask()
 
-        sampler_hypo_if_false = copy.deepcopy(sampler)
+        sampler_hypo_if_false = dill.loads(sampler_dilled)
         sampler_hypo_if_false.tell(x_asked, False)
         x_predicted_if_false = sampler_hypo_if_false._ask()
 
         mp_queue.put(
             (
-                (sampler_hypo_if_true, x_predicted_if_true),
-                (sampler_hypo_if_false, x_predicted_if_false),
+                (dill.dumps(sampler_hypo_if_true), x_predicted_if_true),
+                (dill.dumps(sampler_hypo_if_false), x_predicted_if_false),
             )
         )
 
@@ -133,7 +139,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
     count_additional: int
     c_svm_current: float
     situation_sampler: SituationSamplerT
-    prefact_ask_calc: PreFactoBranchedAskResultCaliculator
+    prefact_ask_calc: Optional[PreFactoBranchedAskResultCaliculator]
 
     def __init__(
         self,
@@ -144,6 +150,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         config: ActiveSamplerConfigT,
         is_valid_param: Optional[Callable[[np.ndarray], bool]] = None,
         situation_sampler: SituationSamplerT = None,
+        use_prefacto_branched_ask: bool = False,
     ):
         c_svm_current = config.c_svm
         slset = SuperlevelSet.fit(X, Y, metric, C=c_svm_current, box_cut=config.box_cut)
@@ -152,7 +159,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
-            is_valid_param = lambda x: True  # noqa
+            is_valid_param = lambda x: True
         self.is_valid_param = is_valid_param
         self.X = X
         self.Y = Y
@@ -161,7 +168,10 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.c_svm_current = c_svm_current
         self.count_additional = 0
         self.situation_sampler = situation_sampler
-        self.prefact_ask_calc = PreFactoBranchedAskResultCaliculator()
+        if use_prefacto_branched_ask:
+            self.prefact_ask_calc = PreFactoBranchedAskResultCaliculator()
+        else:
+            self.prefact_ask_calc = None
 
     def update_center(self):
         raise NotImplementedError("this function is delted")
@@ -238,14 +248,17 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
             return np.array(list(results))
 
     def ask(self) -> np.ndarray:
-        ret = self.prefact_ask_calc.get_bifurcation_prediction(bool(self.Y[-1]))
-        bifurcation_prediction_not_called = ret is None
-        if bifurcation_prediction_not_called:
-            x = self._ask()
-            return x
+        if self.prefact_ask_calc is None:
+            return self._ask()
         else:
-            self = ret[0]  # so dirty
-            x = ret[1]
+            ret = self.prefact_ask_calc.get_bifurcation_prediction(bool(self.Y[-1]))
+            bifurcation_prediction_not_called = ret is None
+            if bifurcation_prediction_not_called:
+                x = self._ask()
+            else:
+                self = ret[0]  # so dirty
+                x = ret[1]
+            self.prefact_ask_calc.start_bifurcation_prediction(self, x)
             return x
 
     @abstractmethod
