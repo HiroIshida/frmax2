@@ -267,11 +267,15 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
 
     def __getstate__(self):  # pickling
         state = self.__dict__.copy()
-        state["prefact_ask_calc"] = None
+        state["prefact_ask_calc"] = self.prefact_ask_calc is not None
         return state
 
     def __setstate__(self, state):  # unpickling
-        state["prefact_ask_calc"] = PreFactoBranchedAskResultCaliculator()
+        has_prefact_ask_calc = state["prefact_ask_calc"]
+        if has_prefact_ask_calc:
+            state["prefact_ask_calc"] = PreFactoBranchedAskResultCaliculator()
+        else:
+            state["prefact_ask_calc"] = None
         self.__dict__.update(state)
 
 
