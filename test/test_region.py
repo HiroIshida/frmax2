@@ -17,7 +17,7 @@ def sphere_dataset() -> Tuple[List[np.ndarray], List[bool]]:
     y_list = []
     n_sample = 10000
     for _ in range(n_sample):
-        x = np.random.randn(3)
+        x = np.random.uniform(-1.5, 1.5, 3)
         x_list.append(x)
         y = is_inside_sphere(x)
         y_list.append(y)
@@ -61,6 +61,40 @@ def test_SuperlevelSet(sphere_dataset: Tuple[List[np.ndarray], List[bool]]):
     surface = levelset.get_surface_by_slicing(np.zeros(1), [0], 200)
     vol = surface.volume()
     np.testing.assert_almost_equal(vol, 3.14159, decimal=1.0)
+
+
+def test_SuperlevelSet_itp(sphere_dataset: Tuple[List[np.ndarray], List[bool]]):
+    metric = Metric.from_ls(np.ones(3))
+    X, Y = sphere_dataset
+    levelset = SuperlevelSet.fit(X, Y, metric)
+
+    # slice into 1d
+    param_slice = np.array([0.0, 0.0])
+    itp = levelset.create_sliced_itp_object(param_slice, [0, 1], 100)
+    values = itp(np.linspace(-2.0, 2.0, 100))
+    positive_rate = np.sum(values > 0.0) / 100
+    assert abs(positive_rate - 0.5) < 0.1
+
+    param_slice = np.array([0.5, 0.0])
+    itp = levelset.create_sliced_itp_object(param_slice, [0, 1], 100)
+    positive_rate = np.sum(values > 0.0) / 100
+    assert abs(positive_rate - np.sqrt(3) / 4.0) < 0.1
+    assert np.isinf(itp(np.array([10.0]))[0])
+
+    # slice into 2d
+    param_slice = np.array([0.0])
+    itp = levelset.create_sliced_itp_object(param_slice, [0], 100)
+    X, Y = np.meshgrid(np.linspace(-2.0, 2.0, 100), np.linspace(-2.0, 2.0, 100))
+    points = np.array([X.flatten(), Y.flatten()]).T
+    values = itp(points)
+    positive_rate = np.sum(values > 0.0) / 100**2
+    assert abs(positive_rate - np.pi / 16.0) < 0.1
+
+    param_slice = np.array([0.5])
+    itp = levelset.create_sliced_itp_object(param_slice, [0], 100)
+    values = itp(points)
+    positive_rate = np.sum(values > 0.0) / 100**2
+    assert abs(positive_rate - (np.sqrt(3) / 2) ** 2 * np.pi / 16.0) < 0.1
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from math import factorial
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 from skimage import measure
 from sklearn.svm import SVC
 
@@ -201,6 +202,23 @@ class SuperlevelSet:
         ]
         meshgrid_comp_list = np.meshgrid(*linspace_comp_list)
         return list(meshgrid_comp_list)
+
+    def create_sliced_itp_object(
+        self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
+    ) -> RegularGridInterpolator:
+        axes_co = get_co_axes(self.dim, axes_slice)
+        b_min_co = self.b_min[axes_co]
+        b_max_co = self.b_max[axes_co]
+        linspace_comp_list = [
+            np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
+        ]
+
+        points = self.create_grid_points(point_slice, axes_slice, n_grid)
+        values = self.func(points).reshape([n_grid] * len(axes_co))
+        itp = RegularGridInterpolator(
+            linspace_comp_list, values, bounds_error=False, fill_value=np.inf
+        )
+        return itp
 
     def create_grid_points(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
