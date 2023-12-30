@@ -15,7 +15,7 @@ def is_inside_sphere(x: np.ndarray) -> bool:
 def sphere_dataset() -> Tuple[List[np.ndarray], List[bool]]:
     x_list = []
     y_list = []
-    n_sample = 10000
+    n_sample = 3000
     for _ in range(n_sample):
         x = np.random.uniform(-1.5, 1.5, 3)
         x_list.append(x)
