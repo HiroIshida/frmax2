@@ -207,11 +207,19 @@ class SuperlevelSet:
         return list(meshgrid_comp_list)
 
     def create_sliced_itp_object(
-        self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
+        self,
+        point_slice: Optional[np.ndarray],
+        axes_slice: List[int],
+        n_grid: int,
+        *,
+        cache: bool = False,
+        method: str = "linear",
     ) -> RegularGridInterpolator:
         cache_base_path = Path("~/.cache/frmax2").expanduser()
         cache_base_path.mkdir(parents=True, exist_ok=True)
-        self_hash_value = md5(pickle.dumps((self, point_slice, axes_slice, n_grid))).hexdigest()
+        self_hash_value = md5(
+            pickle.dumps((self, point_slice, axes_slice, n_grid, method))
+        ).hexdigest()
         cache_path = cache_base_path / f"sliced_itp-{self_hash_value}.pkl"
         if cache_path.exists():
             with open(cache_path, "rb") as f:
@@ -228,10 +236,11 @@ class SuperlevelSet:
             points = self.create_grid_points(point_slice, axes_slice, n_grid)
             values = self.func(points).reshape([n_grid] * len(axes_co))
             itp = RegularGridInterpolator(
-                linspace_comp_list, values, bounds_error=False, fill_value=np.inf
+                linspace_comp_list, values, bounds_error=False, fill_value=-np.inf, method=method
             )
-            with open(cache_path, "wb") as f:
-                pickle.dump(itp, f)
+            if cache:
+                with open(cache_path, "wb") as f:
+                    pickle.dump(itp, f)
             return itp
 
     def create_grid_points(
