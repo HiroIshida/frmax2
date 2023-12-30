@@ -11,6 +11,11 @@ def is_inside_sphere(x: np.ndarray) -> bool:
     return bool(np.linalg.norm(x) < 1.0)
 
 
+def is_inside_ellipsoid(x: np.ndarray) -> bool:
+    r_x, r_y, r_z = 1.0, 1.0, 0.5
+    return bool(x[0] ** 2 / r_x**2 + x[1] ** 2 / r_y**2 + x[2] ** 2 / r_z**2 < 1.0)
+
+
 @pytest.fixture(scope="session")
 def sphere_dataset() -> Tuple[List[np.ndarray], List[bool]]:
     x_list = []
@@ -20,6 +25,19 @@ def sphere_dataset() -> Tuple[List[np.ndarray], List[bool]]:
         x = np.random.uniform(-1.5, 1.5, 3)
         x_list.append(x)
         y = is_inside_sphere(x)
+        y_list.append(y)
+    return x_list, y_list
+
+
+@pytest.fixture(scope="session")
+def ellipsoid_dataset() -> Tuple[List[np.ndarray], List[bool]]:
+    x_list = []
+    y_list = []
+    n_sample = 3000
+    for _ in range(n_sample):
+        x = np.random.uniform(-1.5, 1.5, 3)
+        x_list.append(x)
+        y = is_inside_ellipsoid(x)
         y_list.append(y)
     return x_list, y_list
 
@@ -63,39 +81,31 @@ def test_SuperlevelSet(sphere_dataset: Tuple[List[np.ndarray], List[bool]]):
     np.testing.assert_almost_equal(vol, 3.14159, decimal=1.0)
 
 
-def test_SuperlevelSet_itp(sphere_dataset: Tuple[List[np.ndarray], List[bool]]):
-    metric = Metric.from_ls(np.ones(3))
-    X, Y = sphere_dataset
-    levelset = SuperlevelSet.fit(X, Y, metric)
+def test_SuperlevelSet_itp():
+    for co_dim in range(1, 5):
+        print(f"co_dim: {co_dim}")
+        dim = co_dim + 1
+        metric = Metric.from_ls(np.ones(dim))
+        X = np.random.randn(10, dim)
+        Y = np.random.randint(0, 2, 10).astype(bool)
+        levelset = SuperlevelSet.fit(X, Y, metric)
+        slice_point = np.array([0.1])
+        itp = levelset.create_sliced_itp_object(slice_point, [0], 10, method="cubic")
 
-    # slice into 1d
-    param_slice = np.array([0.0, 0.0])
-    itp = levelset.create_sliced_itp_object(param_slice, [0, 1], 100)
-    values = itp(np.linspace(-2.0, 2.0, 100))
-    positive_rate = np.sum(values > 0.0) / 100
-    assert abs(positive_rate - 0.5) < 0.1
+        n_test = 1000
+        X_test_subspace = np.random.randn(n_test, co_dim)
+        X_test = np.hstack([np.tile(slice_point, (n_test, 1)), X_test_subspace])
 
-    param_slice = np.array([0.5, 0.0])
-    itp = levelset.create_sliced_itp_object(param_slice, [0, 1], 100)
-    positive_rate = np.sum(values > 0.0) / 100
-    assert abs(positive_rate - np.sqrt(3) / 4.0) < 0.1
-    assert np.isinf(itp(np.array([10.0]))[0])
-
-    # slice into 2d
-    param_slice = np.array([0.0])
-    itp = levelset.create_sliced_itp_object(param_slice, [0], 100)
-    X, Y = np.meshgrid(np.linspace(-2.0, 2.0, 100), np.linspace(-2.0, 2.0, 100))
-    points = np.array([X.flatten(), Y.flatten()]).T
-    values = itp(points)
-    positive_rate = np.sum(values > 0.0) / 100**2
-    assert abs(positive_rate - np.pi / 16.0) < 0.1
-
-    param_slice = np.array([0.5])
-    itp = levelset.create_sliced_itp_object(param_slice, [0], 100)
-    values = itp(points)
-    positive_rate = np.sum(values > 0.0) / 100**2
-    assert abs(positive_rate - (np.sqrt(3) / 2) ** 2 * np.pi / 16.0) < 0.1
+        itp_values = itp(X_test_subspace)
+        indices_finite = np.isfinite(itp_values)
+        Y_approx = itp_values[indices_finite] > 0.0
+        Y_gt = levelset.func(X_test)[indices_finite] > 0.0
+        miss_classification = np.sum(Y_gt != Y_approx)
+        rate = miss_classification / n_test
+        print(f"rate: {rate}")
+        assert rate < 0.05
 
 
 if __name__ == "__main__":
-    test_SuperlevelSet(sphere_dataset())
+    # test_SuperlevelSet(sphere_dataset())
+    test_SuperlevelSet_itp()

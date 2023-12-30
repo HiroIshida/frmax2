@@ -259,7 +259,7 @@ class SuperlevelSet:
         linspace_comp_list = [
             np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
         ]
-        meshgrid_comp_list = np.meshgrid(*linspace_comp_list)
+        meshgrid_comp_list = np.meshgrid(*linspace_comp_list, indexing="ij")
         meshgrid_comp_flatten_list = [m.flatten() for m in meshgrid_comp_list]
         grid_points_comp = np.array(list(zip(*meshgrid_comp_flatten_list)))
 
