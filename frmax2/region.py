@@ -1,5 +1,8 @@
+import pickle
 from dataclasses import dataclass
+from hashlib import md5
 from math import factorial
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
@@ -206,19 +209,30 @@ class SuperlevelSet:
     def create_sliced_itp_object(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
     ) -> RegularGridInterpolator:
-        axes_co = get_co_axes(self.dim, axes_slice)
-        b_min_co = self.b_min[axes_co]
-        b_max_co = self.b_max[axes_co]
-        linspace_comp_list = [
-            np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
-        ]
+        cache_base_path = Path("~/.cache/frmax2").expanduser()
+        cache_base_path.mkdir(parents=True, exist_ok=True)
+        self_hash_value = md5(pickle.dumps((self, point_slice, axes_slice, n_grid))).hexdigest()
+        cache_path = cache_base_path / f"sliced_itp-{self_hash_value}.pkl"
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                itp = pickle.load(f)
+            return itp
+        else:
+            axes_co = get_co_axes(self.dim, axes_slice)
+            b_min_co = self.b_min[axes_co]
+            b_max_co = self.b_max[axes_co]
+            linspace_comp_list = [
+                np.linspace(b_min_co[i], b_max_co[i], n_grid) for i in range(len(axes_co))
+            ]
 
-        points = self.create_grid_points(point_slice, axes_slice, n_grid)
-        values = self.func(points).reshape([n_grid] * len(axes_co))
-        itp = RegularGridInterpolator(
-            linspace_comp_list, values, bounds_error=False, fill_value=np.inf
-        )
-        return itp
+            points = self.create_grid_points(point_slice, axes_slice, n_grid)
+            values = self.func(points).reshape([n_grid] * len(axes_co))
+            itp = RegularGridInterpolator(
+                linspace_comp_list, values, bounds_error=False, fill_value=np.inf
+            )
+            with open(cache_path, "wb") as f:
+                pickle.dump(itp, f)
+            return itp
 
     def create_grid_points(
         self, point_slice: Optional[np.ndarray], axes_slice: List[int], n_grid: int
