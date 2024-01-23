@@ -17,6 +17,8 @@ from frmax2.core import (
 )
 from frmax2.environment import AnisoEnvironment
 
+np.random.seed(0)
+
 
 class Result:
     param_hist: List[np.ndarray]
@@ -72,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("-m", type=str, help="sliced space dim", default=3)
     parser.add_argument("-l", type=int, help="simulation length")
     parser.add_argument("-method", type=str, help="method", default="proposed")
+    parser.add_argument("-r", type=float, help="method", default=1.0)
     args = parser.parse_args()
     assert args.method in ["proposed", "bo"]
 
@@ -92,13 +95,14 @@ if __name__ == "__main__":
         # ls_param = np.ones(int(args.n)) * 1.0
         ls_error = np.ones(int(args.m)) * 0.4
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
+        r = round(float(args.r), 1)
         config = DGSamplerConfig(
             param_ls_reduction_rate=1.0,
             n_mc_param_search=30,
             c_svm=10000,
             integration_method="mc",
             n_mc_integral=200,
-            r_exploration=0.5,
+            r_exploration=r,
             learning_rate=1.0,
         )
 
@@ -191,7 +195,7 @@ if __name__ == "__main__":
     result_dir.mkdir(exist_ok=True)
     uuid_str = str(uuid4())  # to identify the result after mc run
     if args.method == "proposed":
-        file_name = result_dir / f"proposed_n{args.n}_m{args.m}_{uuid_str}.pkl"
+        file_name = result_dir / f"proposed_n{args.n}_m{args.m}_r{r}_{uuid_str}.pkl"
     else:
         file_name = result_dir / f"bo_n{args.n}_m{args.m}_{uuid_str}.pkl"
     result.dump(file_name)
