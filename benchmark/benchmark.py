@@ -156,6 +156,27 @@ if __name__ == "__main__":
                 n_eval = len(sampler.X)
                 result.n_eval_hist.append(n_eval)
 
+        param_opt = sampler.optimize(200, 0.5, method="cmaes")
+        size = env.evaluate_size(param_opt)
+        size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
+        print(f"param_opt: {param_opt}")
+        print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
+
+        while True:
+            x = sampler.ask_additional(param_opt)
+            y = env.isInside(x)
+            sampler.tell(x, y)
+            v = sampler.fslset.func(np.expand_dims(np.hstack([param_opt, np.zeros(3)]), axis=0))[0]
+            print(v)
+            cs = sampler.confidence_score(param_opt, 20000)
+            print(f"confidence score: {cs}")
+            if cs > 0.99:
+                break
+        size = env.evaluate_size(param_opt)
+        size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
+        print(f"param_opt: {param_opt}")
+        print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
+
     else:
         n_eval_count = 0
 
