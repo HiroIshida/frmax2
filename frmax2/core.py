@@ -661,6 +661,14 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         # << FINISH COPYING FROM ActiveSamplerBase
         return np.hstack([param_here, e_new])
 
+    def confidence_score(self, param, N_mc: int = 3000) -> float:
+        e_list = [self.situation_sampler() for _ in range(N_mc)]
+        X = np.array([np.hstack([param, e]) for e in e_list])
+        values = self.fslset.func(X)
+        inside_svm_margin = np.logical_and(values > 0, values < 1.0)
+        rate_inside = np.mean(inside_svm_margin)
+        return 1 - rate_inside
+
     def get_com(self, param_here: np.ndarray, n_mc: int = 2000) -> np.ndarray:
         assert param_here.ndim == 1
         error_dim = self.metric.metirics[1].dim
