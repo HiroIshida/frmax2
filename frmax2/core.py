@@ -206,11 +206,16 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
             n_count_evaluate = 0
             best_param = center
             best_volume = self.compute_sliced_volume_batch([best_param])[0]
+            param_metric = self.metric.metirics[0]
             while n_count_evaluate < n_search:
                 dataset = []
                 for _ in range(optimizer.population_size):
                     param = optimizer.ask()
                     val = self.compute_sliced_volume_batch([param])[0]
+                    dist = param_metric(param, center).item()
+                    if dist > r_search:
+                        val -= 10 * (dist - r_search)
+
                     dataset.append((param, -val))  # minus for minimization
                     n_count_evaluate += 1
                 optimizer.tell(dataset)
@@ -517,9 +522,24 @@ class DistributionGuidedSampler(ActiveSamplerBase[DGSamplerConfig, Callable[[], 
         Y = np.hstack([self.Y, Y])
         self.X = X
         self.Y = Y
-        self.fslset = SuperlevelSet.fit(
-            X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
-        )
+
+        # TODO: super dirty... but I don't have time to fix this
+        if self.count_additional > 0 and False:
+            param_center_additional = self.get_optimal_after_additional()
+            param_metric = self.metric.metirics[0]
+            dists = param_metric(param_center_additional, self.X[:, self.axes_param])
+            indices_close = dists < 1.0
+            self.fslset = SuperlevelSet.fit(
+                X[indices_close],
+                Y[indices_close],
+                self.metric,
+                C=self.config.c_svm,
+                box_cut=self.config.box_cut,
+            )
+        else:
+            self.fslset = SuperlevelSet.fit(
+                X, Y, self.metric, C=self.config.c_svm, box_cut=self.config.box_cut
+            )
 
     def compute_sliced_volume(self, param: np.ndarray) -> float:
         # perfectly copied from ActiveSamplerBase
