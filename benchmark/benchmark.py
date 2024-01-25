@@ -93,7 +93,7 @@ if __name__ == "__main__":
         l_iter = 1000 if args.l is None else args.l
         ls_param = np.ones(int(args.n)) * 0.5
         # ls_param = np.ones(int(args.n)) * 1.0
-        ls_error = np.ones(int(args.m)) * 0.4
+        ls_error = np.ones(int(args.m)) * 0.2
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
         r = round(float(args.r), 1)
         config = DGSamplerConfig(
@@ -145,7 +145,7 @@ if __name__ == "__main__":
                 param_opt = sampler.optimize(200, 0.5, method="cmaes")
                 size = env.evaluate_size(param_opt)
                 size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
-                print(f"param_opt: {param_opt}")
+                # print(f"param_opt: {param_opt}")
                 print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
                 size_list.append(size / size_opt)
 
@@ -159,28 +159,34 @@ if __name__ == "__main__":
         param_opt = sampler.optimize(200, 0.5, method="cmaes")
         size = env.evaluate_size(param_opt)
         size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
+        print(f"before additional")
         print(f"param_opt: {param_opt}")
         print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
 
-        while True:
-            x = sampler.ask_additional(param_opt)
-            y = env.isInside(x)
-            sampler.tell(x, y)
-            v = sampler.fslset.func(np.expand_dims(np.hstack([param_opt, np.zeros(3)]), axis=0))[0]
-            print(v)
-            cs = sampler.confidence_score(param_opt, 20000)
-            print(f"confidence score: {cs}")
-            if cs > 0.99:
-                break
-        size = env.evaluate_size(param_opt)
-        size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
-        print(f"param_opt: {param_opt}")
-        print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
+        # n_additional = args.m * 20
+        # for _ in range(n_additional):
+        #     x = sampler.ask_additional(param_opt)
+        #     y = env.isInside(x)
+        #     sampler.tell(x, y)
+        #     size = env.evaluate_size(param_opt)
+        #     size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
+        #     result.param_hist.append(param_opt)
+        #     result.size_hist.append(size)
+        #     result.size_est_hist.append(size_est)
+        #     result.n_eval_hist.append(len(sampler.X))
+
+        # size = env.evaluate_size(param_opt)
+        # size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
+        # print(f"after additional")
+        # print(f"param_opt: {param_opt}")
+        # print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
 
     else:
         n_eval_count = 0
+        prev_samples = None
 
         def evaluate_volume_mc(param: np.ndarray, n_mc: int = 50) -> float:
+            x_list = []
             y_list = []
             for _ in range(n_mc):
                 global n_eval_count
@@ -188,7 +194,9 @@ if __name__ == "__main__":
                 s = env.sample_situation()
                 x = np.hstack([param, s])
                 y = env.isInside(x)
+                x_list.append(x)
                 y_list.append(y)
+            (x_list, y_list)
             y_mean = np.mean(y_list) * env.sampling_space_volume
             return y_mean
 
