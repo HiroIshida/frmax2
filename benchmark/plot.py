@@ -8,25 +8,52 @@ from benchmark import Result
 
 result_dir = Path("./result")
 
-pattern = r"(?P<method_name>\w+)_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
+pattern_proposed = (
+    r"proposed_n(?P<n>\d+)_m(?P<m>\d+)_r(?P<r>[0-9.]+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
+)
+pattern_bo = (
+    r"bo_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
+)
 
 
 data = {}
 for file in result_dir.iterdir():
     file_name = Path(file).name
-    match = re.search(pattern, file_name)
-    if match:
-        extracted_data = match.groupdict()
-        key = (extracted_data["method_name"], int(extracted_data["n"]), int(extracted_data["m"]))
+    match1 = re.search(pattern_proposed, file_name)
+    if match1:
+        extracted_data = match1.groupdict()
+        key = (
+            "proposed",
+            int(extracted_data["n"]),
+            int(extracted_data["m"]),
+            float(extracted_data["r"]),
+        )
         if key not in data:
             data[key] = []
         result = Result.load(file)
         data[key].append(result)
+    else:
+        match2 = re.search(pattern_bo, file_name)
+        if match2:
+            extracted_data = match2.groupdict()
+            key = (
+                "bo",
+                int(extracted_data["n"]),
+                int(extracted_data["m"]),
+            )
+            if key not in data:
+                data[key] = []
+            result = Result.load(file)
+            data[key].append(result)
+
 
 fig, ax = plt.subplots(figsize=(12, 8))
 for key, results in data.items():
-    if key[2] != 6:
-        continue
+    print(key)
+    # if key[2] != 6:
+    #     continue
+    # if key[3] != 0.5:
+    #     continue
     size_hist_list = []
     for result in results:
         size_hist = np.array(result.size_hist) / result.size_opt_gt
@@ -35,13 +62,16 @@ for key, results in data.items():
         size_hist_list.append(size_hist)
     size_hist_average = np.mean(size_hist_list, axis=0)
     size_hist_std = np.std(size_hist_list, axis=0)
-    ax.plot(result.n_eval_hist, size_hist_average, label=f"{key[0]}: n={key[1]}, m={key[2]}")
+    ax.plot(
+        result.n_eval_hist, size_hist_average, label=f"{key[0]}: n={key[1]}, m={key[2]}"
+    )
     ax.fill_between(
         result.n_eval_hist,
         size_hist_average - size_hist_std,
         size_hist_average + size_hist_std,
         alpha=0.2,
     )
+ax.legend()
 plt.show()
 
 # plt.figure(figsize=(12, 8))
