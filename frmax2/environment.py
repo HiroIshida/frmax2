@@ -127,7 +127,7 @@ class GaussianEnvironment(EnvironmentBase):
 
 class AnisoEnvironment(EnvironmentBase):
     def radius_func(self, param: np.ndarray) -> float:
-        weight = np.ones(self.n_dim) * 0.05
+        weight = np.ones(self.n_dim) * 0.0
         weight[0] = 1.0
         weight[1] = 0.5
         param_ = param * weight
