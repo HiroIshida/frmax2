@@ -135,7 +135,7 @@ if __name__ == "__main__":
                     y = env.isInside(x)
                     sampler.tell(x, y)
 
-            if i % 20 == 0:
+            if i % 20 == 19:
                 param_opt = sampler.optimize(200, 0.5, method="cmaes")
                 size = env.evaluate_size(param_opt)
                 size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
@@ -145,7 +145,7 @@ if __name__ == "__main__":
                 result.size_hist.append(size)
                 result.size_est_hist.append(size_est)
 
-                n_eval = len(sampler.X) + n_init_sample
+                n_eval = len(sampler.X)
                 result.n_eval_hist.append(n_eval)
 
         param_opt = sampler.optimize(200, 0.5, method="cmaes")
@@ -175,11 +175,10 @@ if __name__ == "__main__":
         l_iter = 100 if args.l is None else args.l
 
         if args.method == "bo":
-            param_bound = Bound(np.ones(int(args.n)) * -2.0, np.ones(int(args.n)) * 2.0)
-            bo = SaasBoOptimzer(X, Y, param_bound)
-
             X = [param_init]
             Y = [evaluate_volume_mc(param_init)]
+            param_bound = Bound(np.ones(int(args.n)) * -2.0, np.ones(int(args.n)) * 2.0)
+            bo = SaasBoOptimzer(X, Y, param_bound)
 
             result.param_hist.append(param_init)
             result.size_hist.append(env.evaluate_size(param_init))
