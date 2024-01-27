@@ -11,6 +11,12 @@ def npdf(dist_from_center: float) -> float:
     return math.exp(-0.5 * dist_from_center**2)
 
 
+def generate_random_orthogonal_matrix(size):
+    random_matrix = np.random.rand(size, size)
+    Q, R = np.linalg.qr(random_matrix)
+    return Q
+
+
 class EnvironmentBase(ABC):
     def __init__(
         self,
@@ -19,6 +25,7 @@ class EnvironmentBase(ABC):
         with_bias: bool = False,
         with_hollow: bool = False,
         error_consider_axes: Optional[List[int]] = None,
+        random_basis: bool = False,
     ):
         self.n_dim = n_dim
         self.m_dim = m_dim
@@ -36,6 +43,10 @@ class EnvironmentBase(ABC):
         if error_consider_axes is None:
             error_consider_axes = list(range(self.m_dim))
         self.error_consider_axes = np.array(error_consider_axes, dtype=int)
+        if random_basis:
+            self.M = generate_random_orthogonal_matrix(self.n_dim)
+        else:
+            self.M = np.eye(self.n_dim)
 
     @property
     def bounds(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -48,8 +59,12 @@ class EnvironmentBase(ABC):
     def sample_situation(self) -> np.ndarray:
         return np.random.uniform(self.bounds[0], self.bounds[1])
 
-    @abstractmethod
     def radius_func(self, param: np.ndarray) -> float:
+        param = np.dot(self.M, param)
+        return self._radius_func(param)
+
+    @abstractmethod
+    def _radius_func(self, param: np.ndarray) -> float:
         pass
 
     def evaluate_size(self, param: np.ndarray) -> float:
@@ -120,13 +135,13 @@ class EnvironmentBase(ABC):
 
 
 class GaussianEnvironment(EnvironmentBase):
-    def radius_func(self, param: np.ndarray) -> float:
+    def _radius_func(self, param: np.ndarray) -> float:
         dists = np.sqrt(np.sum(param**2))
         return npdf(dists)
 
 
 class AnisoEnvironment(EnvironmentBase):
-    def radius_func(self, param: np.ndarray) -> float:
+    def _radius_func(self, param: np.ndarray) -> float:
         weight = np.ones(self.n_dim) * 0.05
         weight[0] = 1.0
         weight[1] = 0.5
