@@ -11,9 +11,7 @@ result_dir = Path("./result")
 pattern_proposed = (
     r"proposed_n(?P<n>\d+)_m(?P<m>\d+)_r(?P<r>[0-9.]+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
 )
-pattern_bo = (
-    r"bo_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
-)
+pattern_bo = r"bo_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
 
 
 data = {}
@@ -62,9 +60,7 @@ for key, results in data.items():
         size_hist_list.append(size_hist)
     size_hist_average = np.mean(size_hist_list, axis=0)
     size_hist_std = np.std(size_hist_list, axis=0)
-    ax.plot(
-        result.n_eval_hist, size_hist_average, label=f"{key[0]}: n={key[1]}, m={key[2]}"
-    )
+    ax.plot(result.n_eval_hist, size_hist_average, label=f"{key[0]}: n={key[1]}, m={key[2]}")
     ax.fill_between(
         result.n_eval_hist,
         size_hist_average - size_hist_std,

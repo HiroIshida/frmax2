@@ -17,7 +17,7 @@ from frmax2.core import (
 )
 from frmax2.environment import AnisoEnvironment
 
-np.random.seed(0)
+# np.random.seed(0)
 
 
 class Result:
@@ -70,11 +70,12 @@ class Result:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", type=str, help="parameter dim", default=16)
-    parser.add_argument("-m", type=str, help="sliced space dim", default=3)
+    parser.add_argument("-n", type=int, help="parameter dim", default=16)
+    parser.add_argument("-m", type=int, help="sliced space dim", default=3)
     parser.add_argument("-l", type=int, help="simulation length")
     parser.add_argument("-method", type=str, help="method", default="proposed")
     parser.add_argument("-r", type=float, help="method", default=1.0)
+    parser.add_argument("-c", type=float, help="method", default=10000)
     args = parser.parse_args()
     assert args.method in ["proposed", "bo"]
 
@@ -89,6 +90,15 @@ if __name__ == "__main__":
     size_opt = env.evaluate_size(np.zeros(int(args.n)))
     result = Result(size_opt)
 
+    if args.m == 3:
+        learning_rate = 1.0
+    elif args.m == 6:
+        learning_rate = 0.5
+    elif args.m == 12:
+        learning_rate = 0.2
+    else:
+        assert False
+
     if args.method == "proposed":
         l_iter = 1000 if args.l is None else args.l
         ls_param = np.ones(int(args.n)) * 0.5
@@ -99,11 +109,12 @@ if __name__ == "__main__":
         config = DGSamplerConfig(
             param_ls_reduction_rate=1.0,
             n_mc_param_search=30,
-            c_svm=10000,
+            c_svm=args.c,
             integration_method="mc",
             n_mc_integral=200,
             r_exploration=r,
-            learning_rate=1.0,
+            # learning_rate=1.0,
+            learning_rate=learning_rate,
         )
 
         X = []
