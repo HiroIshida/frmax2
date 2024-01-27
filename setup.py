@@ -4,6 +4,9 @@ setup_requires = []
 
 install_requires = [
     "numpy",
+    "cmaes",
+    "botorch",
+    "dill",
 ]
 
 setup(
