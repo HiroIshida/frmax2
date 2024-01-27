@@ -8,10 +8,9 @@ from benchmark import Result
 
 result_dir = Path("./result")
 
-pattern_proposed = (
-    r"proposed_n(?P<n>\d+)_m(?P<m>\d+)_r(?P<r>[0-9.]+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
-)
-pattern_bo = r"bo_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.pkl"
+pattern_proposed = r"proposed_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.json"
+pattern_bo = r"bo_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.json"
+pattern_cmaes = r"cmaes_n(?P<n>\d+)_m(?P<m>\d+)_(?P<uuid_str>[a-f0-9\-]+)\.json"
 
 
 data = {}
@@ -24,7 +23,6 @@ for file in result_dir.iterdir():
             "proposed",
             int(extracted_data["n"]),
             int(extracted_data["m"]),
-            float(extracted_data["r"]),
         )
         if key not in data:
             data[key] = []
@@ -56,7 +54,18 @@ for key, results in data.items():
     for result in results:
         size_hist = np.array(result.size_hist) / result.size_opt_gt
         if key[0] == "bo":
-            size_hist = np.maximum.accumulate(size_hist)
+            size_est_hist = np.array(result.size_est_hist) / result.size_opt_gt
+            size_est_max = -1
+            size_hist_max_list = []
+            for i in range(len(size_hist)):
+                size = size_hist[i]
+                size_est = size_est_hist[i]
+                if size_est > size_est_max:
+                    size_est_max = size_est
+                    size_hist_max_list.append(size)
+                else:
+                    size_hist_max_list.append(size_hist_max_list[-1])
+            size_hist = np.array(size_hist_max_list)
         size_hist_list.append(size_hist)
     size_hist_average = np.mean(size_hist_list, axis=0)
     size_hist_std = np.std(size_hist_list, axis=0)
@@ -67,7 +76,9 @@ for key, results in data.items():
         size_hist_average + size_hist_std,
         alpha=0.2,
     )
+# ax.set_xlim(0, 2000)
 ax.legend()
+ax.set_xscale("log", basex=10)
 plt.show()
 
 # plt.figure(figsize=(12, 8))

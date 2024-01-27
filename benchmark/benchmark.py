@@ -7,6 +7,7 @@ from uuid import uuid4
 import numpy as np
 import threadpoolctl
 import tqdm
+from cmaes import CMA
 
 from frmax2.bayes_opt import Bound, SaasBoOptimzer
 from frmax2.core import (
@@ -16,8 +17,6 @@ from frmax2.core import (
     DistributionGuidedSampler,
 )
 from frmax2.environment import AnisoEnvironment
-
-# np.random.seed(0)
 
 
 class Result:
@@ -74,76 +73,60 @@ if __name__ == "__main__":
     parser.add_argument("-m", type=int, help="sliced space dim", default=3)
     parser.add_argument("-l", type=int, help="simulation length")
     parser.add_argument("-method", type=str, help="method", default="proposed")
-    parser.add_argument("-r", type=float, help="method", default=1.0)
     parser.add_argument("-c", type=float, help="method", default=10000)
     args = parser.parse_args()
-    assert args.method in ["proposed", "bo"]
+    assert args.method in ["proposed", "bo", "cmaes"]
 
-    env = AnisoEnvironment(int(args.n), int(args.m), with_hollow=True, error_consider_axes=[0, 1])
+    env = AnisoEnvironment(
+        int(args.n), int(args.m), with_hollow=True, error_consider_axes=[0, 1], random_basis=True
+    )
 
     param_init = np.zeros(int(args.n))
-    param_init[0] = -1.5
-    if len(param_init) > 1:
-        param_init[1] = -1.5
-    if len(param_init) > 2:
-        param_init[2] = -1.5
+    param_init[0] = -1.0
+    param_init = np.linalg.inv(env.M).dot(param_init)  # because of random basis
     size_opt = env.evaluate_size(np.zeros(int(args.n)))
     result = Result(size_opt)
 
-    if args.m == 3:
-        learning_rate = 1.0
-    elif args.m == 6:
-        learning_rate = 0.5
-    elif args.m == 12:
-        learning_rate = 0.2
-    else:
-        assert False
+    print(f"size now {env.evaluate_size(param_init)}")
 
     if args.method == "proposed":
         l_iter = 1000 if args.l is None else args.l
         ls_param = np.ones(int(args.n)) * 0.5
-        # ls_param = np.ones(int(args.n)) * 1.0
         ls_error = np.ones(int(args.m)) * 0.2
         metric = CompositeMetric.from_ls_list([ls_param, ls_error])
-        r = round(float(args.r), 1)
         config = DGSamplerConfig(
             param_ls_reduction_rate=1.0,
             n_mc_param_search=30,
             c_svm=args.c,
             integration_method="mc",
             n_mc_integral=200,
-            r_exploration=r,
-            # learning_rate=1.0,
-            learning_rate=learning_rate,
+            r_exploration=1.0,
+            learning_rate=0.5,
         )
+        param_metric = metric.metirics[0]
 
         X = []
         Y = []
-        n_positive = 0
-        n_negative = 0
-        n_count_each = 5 * int(args.m)
-        while True:
-            x = np.hstack([param_init, env.sample_situation()])
+        n_init_sample = int(args.m) * 10
+        for _ in range(n_init_sample):
+            e = env.sample_situation()
+            x = np.hstack([param_init, e])
             y = env.isInside(x)
-            if y:
-                n_positive += 1
-                if n_positive < n_count_each:
-                    X.append(x)
-                    Y.append(y)
-            else:
-                n_negative += 1
-                if n_negative < n_count_each:
-                    X.append(x)
-                    Y.append(y)
-            if n_positive >= n_count_each and n_negative >= n_count_each:
-                break
+            X.append(x)
+            Y.append(y)
 
         X = np.array(X)
         Y = np.array(Y)
         sampler: BlackBoxSampler = DistributionGuidedSampler(
             X, Y, metric, param_init, config, situation_sampler=env.sample_situation
         )
-        size_list = []
+
+        result.param_hist.append(param_init)
+        result.size_hist.append(env.evaluate_size(param_init))
+        size_est = sampler.compute_sliced_volume(param_init) * env.sampling_space_volume
+        result.size_est_hist.append(size_est)
+        result.n_eval_hist.append(n_init_sample)
+
         for i in tqdm.tqdm(range(l_iter)):
 
             with threadpoolctl.threadpool_limits(limits=1, user_api="openmp"):
@@ -156,15 +139,13 @@ if __name__ == "__main__":
                 param_opt = sampler.optimize(200, 0.5, method="cmaes")
                 size = env.evaluate_size(param_opt)
                 size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
-                # print(f"param_opt: {param_opt}")
                 print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
-                size_list.append(size / size_opt)
 
                 result.param_hist.append(param_opt)
                 result.size_hist.append(size)
                 result.size_est_hist.append(size_est)
 
-                n_eval = len(sampler.X)
+                n_eval = len(sampler.X) + n_init_sample
                 result.n_eval_hist.append(n_eval)
 
         param_opt = sampler.optimize(200, 0.5, method="cmaes")
@@ -173,28 +154,8 @@ if __name__ == "__main__":
         print(f"before additional")
         print(f"param_opt: {param_opt}")
         print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
-
-        # n_additional = args.m * 20
-        # for _ in range(n_additional):
-        #     x = sampler.ask_additional(param_opt)
-        #     y = env.isInside(x)
-        #     sampler.tell(x, y)
-        #     size = env.evaluate_size(param_opt)
-        #     size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
-        #     result.param_hist.append(param_opt)
-        #     result.size_hist.append(size)
-        #     result.size_est_hist.append(size_est)
-        #     result.n_eval_hist.append(len(sampler.X))
-
-        # size = env.evaluate_size(param_opt)
-        # size_est = sampler.compute_sliced_volume(param_opt) * env.sampling_space_volume
-        # print(f"after additional")
-        # print(f"param_opt: {param_opt}")
-        # print(f"rate: {size / size_opt}, rate_est: {size_est / size_opt}")
-
     else:
         n_eval_count = 0
-        prev_samples = None
 
         def evaluate_volume_mc(param: np.ndarray, n_mc: int = 50) -> float:
             x_list = []
@@ -213,29 +174,69 @@ if __name__ == "__main__":
 
         l_iter = 100 if args.l is None else args.l
 
-        X = [param_init]
-        Y = [evaluate_volume_mc(param_init)]
-        param_bound = Bound(np.ones(int(args.n)) * -2.0, np.ones(int(args.n)) * 2.0)
-        bo = SaasBoOptimzer(X, Y, param_bound)
+        if args.method == "bo":
+            param_bound = Bound(np.ones(int(args.n)) * -2.0, np.ones(int(args.n)) * 2.0)
+            bo = SaasBoOptimzer(X, Y, param_bound)
 
-        for _ in range(l_iter):
-            x = bo.ask()
-            y_est = evaluate_volume_mc(x)
-            bo.tell(x, y_est)
-            y_real = env.evaluate_size(x)
-            print(f"rate: {y_real / size_opt}, rate_est: {y_est / size_opt}")
+            X = [param_init]
+            Y = [evaluate_volume_mc(param_init)]
 
-            result.param_hist.append(x)
-            result.size_hist.append(y_real)
-            result.size_est_hist.append(y_est)
+            result.param_hist.append(param_init)
+            result.size_hist.append(env.evaluate_size(param_init))
+            result.size_est_hist.append(Y[0])
             result.n_eval_hist.append(n_eval_count)
+
+            for _ in range(l_iter):
+                x = bo.ask()
+                y_est = evaluate_volume_mc(x)
+                bo.tell(x, y_est)
+                y_real = env.evaluate_size(x)
+                print(f"rate: {y_real / size_opt}, rate_est: {y_est / size_opt}")
+
+                result.param_hist.append(x)
+                result.size_hist.append(y_real)
+                result.size_est_hist.append(y_est)
+                result.n_eval_hist.append(n_eval_count)
+        elif args.method == "cmaes":
+            alpha = 1.0
+            population_size = int((4 + np.floor(np.log(args.n) * 3).astype(int)) * alpha)
+            bounds = np.array([(-2.0, 2.0) for _ in range(int(args.n))])
+            optimizer = CMA(
+                mean=param_init, sigma=0.5, population_size=population_size, bounds=bounds
+            )
+
+            n_count_evaluate = 0
+            best_param = param_init
+            best_volume = evaluate_volume_mc(param_init)
+            print(f"population size: {optimizer.population_size}")
+            while True:
+                dataset = []
+                for _ in range(optimizer.population_size):
+                    param = optimizer.ask()
+                    val = evaluate_volume_mc(param)
+                    dataset.append((param, -val))  # minus for minimization
+                    n_count_evaluate += 1
+                optimizer.tell(dataset)
+                if optimizer.should_stop() or n_count_evaluate >= l_iter:
+                    break
+                params, negative_volumes = zip(*dataset)
+                best_index = np.argmin(negative_volumes)
+                param, negvol = dataset[best_index]
+                est_volume = -negvol
+                real_volume = env.evaluate_size(param)
+                result.param_hist.append(param)
+                result.size_hist.append(real_volume)
+                result.size_est_hist.append(est_volume)
+                result.n_eval_hist.append(n_count_evaluate)
+                print(f"rate: {real_volume / size_opt}, rate_est: {est_volume / size_opt}")
+        else:
+            assert False
 
     # if result directory does not exist create it
     result_dir = Path("result")
     result_dir.mkdir(exist_ok=True)
     uuid_str = str(uuid4())  # to identify the result after mc run
-    if args.method == "proposed":
-        file_name = result_dir / f"proposed_n{args.n}_m{args.m}_r{r}_{uuid_str}.pkl"
-    else:
-        file_name = result_dir / f"bo_n{args.n}_m{args.m}_{uuid_str}.pkl"
-    result.dump(file_name)
+    file_name = f"{args.method}_n{args.n}_m{args.m}_{uuid_str}.json"
+
+    file_path = result_dir / file_name
+    result.dump(file_path)
