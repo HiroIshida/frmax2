@@ -197,12 +197,17 @@ if __name__ == "__main__":
                 result.size_est_hist.append(y_est)
                 result.n_eval_hist.append(n_eval_count)
         elif args.method == "cmaes":
-            alpha = 1.0
+            alpha = 0.5  # original population size is quite inefficient
             population_size = int((4 + np.floor(np.log(args.n) * 3).astype(int)) * alpha)
             bounds = np.array([(-2.0, 2.0) for _ in range(int(args.n))])
             optimizer = CMA(
                 mean=param_init, sigma=0.5, population_size=population_size, bounds=bounds
             )
+
+            result.param_hist.append(param_init)
+            result.size_hist.append(env.evaluate_size(param_init))
+            result.size_est_hist.append(-1)
+            result.n_eval_hist.append(n_eval_count)
 
             n_count_evaluate = 0
             best_param = param_init
@@ -226,7 +231,7 @@ if __name__ == "__main__":
                 result.param_hist.append(param)
                 result.size_hist.append(real_volume)
                 result.size_est_hist.append(est_volume)
-                result.n_eval_hist.append(n_count_evaluate)
+                result.n_eval_hist.append(n_eval_count)
                 print(f"rate: {real_volume / size_opt}, rate_est: {est_volume / size_opt}")
         else:
             assert False
