@@ -126,6 +126,20 @@ class PreFactoBranchedAskResultCaliculator:
         )
 
 
+class NullIsVaildParam:
+    def __call__(self, x: np.ndarray) -> bool:
+        return True
+
+
+@dataclass
+class UniformSituationSampler:
+    lb: np.ndarray
+    ub: np.ndarray
+
+    def __call__(self) -> np.ndarray:
+        return np.random.uniform(self.lb, self.ub)
+
+
 class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, SituationSamplerT]):
     fslset: SuperlevelSet
     metric: CompositeMetric
@@ -159,7 +173,7 @@ class ActiveSamplerBase(BlackBoxSampler, Generic[ActiveSamplerConfigT, Situation
         self.config = config
         self.best_param_so_far = param_init
         if is_valid_param is None:
-            is_valid_param = lambda x: True
+            is_valid_param = NullIsVaildParam()
         self.is_valid_param = is_valid_param
         self.X = X
         self.Y = Y
